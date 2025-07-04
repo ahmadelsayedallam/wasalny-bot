@@ -1,38 +1,60 @@
-import logging, sqlite3, os
+import sqlite3
+import logging
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
-TOKEN = "8039901966:AAFx8Mp0v33CSro0Ii5Im0howXpl99EUCCg"
+# اضبط التوكن هنا أو استخدم متغير بيئة
+BOT_TOKEN_ADMIN = "8039901966:AAFx8Mp0v33CSro0Ii5Im0howXpl99EUCCg"
 
-logging.basicConfig(level=logging.INFO)
+# مسار ملف قاعدة البيانات
+DB_PATH = "wasalny.db"
+
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    db_path = "wasalny/data.db"
-    if not os.path.exists(db_path):
-        await update.message.reply_text("🚫 قاعدة البيانات غير موجودة!")
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT id, user_id, order_text, status FROM orders ORDER BY id DESC LIMIT 10")
+    orders = cursor.fetchall()
+    conn.close()
+
+    if not orders:
+        await update.message.reply_text("مافيش طلبات حتى الآن.")
         return
 
-    try:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, user_id, text, status FROM orders")
-        orders = cursor.fetchall()
-        conn.close()
+    message = "📝 *الطلبات الأخيرة:*\n\n"
+    for order in orders:
+        order_id, user_id, order_text, status = order
+        message += f"#{order_id} - مستخدم: {user_id}\nالطلب: {order_text}\nالحالة: {status}\n\n"
 
-        if not orders:
-            await update.message.reply_text("🚫 لا يوجد طلبات حتى الآن.")
-            return
+    await update.message.reply_text(message, parse_mode="Markdown")
 
-        msg = "📋 الطلبات الحالية:\n\n"
-        for o in orders:
-            msg += f"📦 #{o[0]} - الحالة: {o[3]}\n👤 المستخدم: {o[1]}\n📝 الطلب: {o[2]}\n\n"
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = (
+        "/start - عرض الطلبات الأخيرة\n"
+        "/help - هذه الرسالة\n"
+        # ممكن تضيف أوامر تانية هنا حسب الحاجة
+    )
+    await update.message.reply_text(help_text)
 
-        await update.message.reply_text(msg)
-    except Exception as e:
-        await update.message.reply_text(f"❌ حدث خطأ أثناء تحميل الطلبات:\n{e}")
+def main():
+    app = ApplicationBuilder().token(BOT_TOKEN_ADMIN).build()
 
-app = ApplicationBuilder().token(TOKEN).build()
-app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+
+    print("بوت الإدارة شغال...")
+    app.run_polling()
 
 if __name__ == "__main__":
-    app.run_polling()
+    main()
