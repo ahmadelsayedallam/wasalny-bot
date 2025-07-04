@@ -1,4 +1,3 @@
-
 import logging
 import sqlite3
 from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
@@ -81,9 +80,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 msg = await context.bot.send_message(
                     uid,
                     f"📦 طلب جديد:\n\n{order_text}",
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("أرسل عرضك", callback_data=f"offer_{order_id}")]
-                    ])
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("أرسل عرضك", callback_data=f"offer_{order_id}")
+                    ]])
                 )
                 pending_orders.setdefault(order_id, []).append(msg.message_id)
 
@@ -104,10 +103,16 @@ async def handle_offer_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if state.startswith("sending_offer_"):
         order_id = int(state.split("_")[2])
         offer_text = update.message.text
-        price, eta = offer_text.split("+")
+        try:
+            price, eta = offer_text.split("+")
+        except:
+            await update.message.reply_text("❗ من فضلك اكتب العرض كده: السعر + الوقت")
+            return
+
         conn = sqlite3.connect("wasalny/data.db")
         c = conn.cursor()
-        c.execute("INSERT INTO offers (order_id, courier_id, price, eta) VALUES (?, ?, ?, ?)", (order_id, courier_id, price.strip(), eta.strip()))
+        c.execute("INSERT INTO offers (order_id, courier_id, price, eta) VALUES (?, ?, ?, ?)",
+                  (order_id, courier_id, price.strip(), eta.strip()))
         conn.commit()
         conn.close()
 
@@ -168,7 +173,7 @@ async def handle_rating(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             await update.message.reply_text("❗ من فضلك اكتب رقم صحيح من 1 إلى 5.")
 
-# Start the bot
+# ======= Run bot ========
 init_db()
 app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
