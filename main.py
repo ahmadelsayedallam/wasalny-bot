@@ -5,7 +5,7 @@ import subprocess
 from telegram import Update, KeyboardButton, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
-# استخدام التوكن من متغير البيئة أو القيمة الثابتة
+# 🛡️ التوكن من متغير البيئة أو fallback
 TOKEN = os.getenv("TOKEN", "8119170278:AAFQ_orcaoQL0wKVqtqXchxcivip6qBEo3Q")
 
 logging.basicConfig(level=logging.INFO)
@@ -13,8 +13,14 @@ user_states = {}
 
 def init_db():
     try:
+        # 🗂️ تأكد من وجود الفولدر
         os.makedirs("wasalny", exist_ok=True)
-        subprocess.run(["ls", "-R", "."], check=False)  # دي بتطبع الفولدرات كلها
+
+        # ✅ اختبار صلاحية الكتابة بإنشاء ملف
+        with open("wasalny/test.txt", "w", encoding="utf-8") as f:
+            f.write("✅ تمت تجربة الكتابة داخل فولدر wasalny\n")
+
+        # 🛠️ إنشاء قاعدة البيانات والجدول
         conn = sqlite3.connect("wasalny/data.db")
         cursor = conn.cursor()
         cursor.execute('''
@@ -27,9 +33,10 @@ def init_db():
         ''')
         conn.commit()
         conn.close()
-        logging.info("✅ جدول orders جاهز أو متواجد بالفعل.")
+
+        logging.info("✅ قاعدة البيانات والجدول orders تم إنشاؤهم أو موجودين بالفعل.")
     except Exception as e:
-        logging.error(f"❌ خطأ أثناء إنشاء قاعدة البيانات: {e}")
+        logging.error(f"❌ فشل أثناء إنشاء قاعدة البيانات أو الكتابة: {e}")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[KeyboardButton("🚶‍♂️ مستخدم"), KeyboardButton("🚚 مندوب")]]
@@ -56,7 +63,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"✅ تم استلام طلبك: {order}\n📢 جارٍ إرسال الطلب للمناديب...")
         except Exception as e:
             logging.error(f"❌ فشل حفظ الطلب: {e}")
-            await update.message.reply_text("❌ عذراً، حصل خطأ أثناء حفظ الطلب.")
+            await update.message.reply_text("❌ عذراً، حصل خطأ أثناء حفظ طلبك.")
         user_states[user_id] = None
         return
 
