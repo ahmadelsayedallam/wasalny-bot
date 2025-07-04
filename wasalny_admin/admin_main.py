@@ -4,7 +4,7 @@ import psycopg2
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-BOT_TOKEN_ADMIN = os.getenv("BOT_TOKEN_ADMIN")
+BOT_TOKEN_ADMIN = os.getenv("8039901966:AAFx8Mp0v33CSro0Ii5Im0howXpl99EUCCg")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 logging.basicConfig(level=logging.INFO)
