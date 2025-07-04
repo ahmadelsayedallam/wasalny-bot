@@ -28,9 +28,8 @@ def init_db():
     ''')
     conn.commit()
     conn.close()
-    print("✅ قاعدة البيانات تم إنشاؤها أو موجودة فعلاً.")
 
-# 🚀 الأمر /start
+# 🚀 /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [KeyboardButton("🚶‍♂️ مستخدم"), KeyboardButton("🚚 مندوب")]
@@ -40,12 +39,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     )
 
-# 🧠 معالجة الرسائل النصية
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# 🧠 استقبال كل رسالة نصية
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    text = update.message.text
+    text = update.message.text.strip()
 
-    # اختيار الدور
     if text == "🚶‍♂️ مستخدم":
         user_states[user_id] = "awaiting_order"
         await update.message.reply_text("اكتب طلبك بالتفصيل (مثال: 1 كيلو طماطم، 2 رغيف)...")
@@ -53,7 +51,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "🚚 مندوب":
         await update.message.reply_text("شكرًا لانضمامك كمندوب! هنبعتلك الطلبات القريبة أول ما توصل.")
 
-    # الطلب من المستخدم
     elif user_states.get(user_id) == "awaiting_order":
         order_text = text
         conn = sqlite3.connect("wasalny/data.db")
@@ -66,11 +63,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ تم استلام طلبك: {order_text}\n📢 جارٍ إرسال الطلب للمناديب...")
 
     else:
-        await update.message.reply_text("اكتب /start وابدأ من جديد ✨")
+        await update.message.reply_text("استخدم /start لتسجيل نوعك.")
 
 # 🔁 تشغيل البوت
-app = ApplicationBuilder().token(TOKEN).build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-
-if __name__ == "__main__"
+if __name__ == "__main__":
+    init_db()
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.run_polling()
+ 
