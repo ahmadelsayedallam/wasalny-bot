@@ -1,16 +1,19 @@
-
 import logging
 import sqlite3
 import os
 from telegram import Update, KeyboardButton, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
-# توكن البوت
+# 🔐 التوكن
 TOKEN = "8119170278:AAGfqFrfes_0g-EmbBBk2K6e6DjQflwlBg0"
 
+# 🔧 تهيئة اللوج
 logging.basicConfig(level=logging.INFO)
+
+# 🗂️ الحالة المؤقتة للمستخدمين
 user_states = {}
 
+# ✅ إنشاء قاعدة البيانات لو مش موجودة
 def init_db():
     os.makedirs("wasalny", exist_ok=True)
     conn = sqlite3.connect("wasalny/data.db")
@@ -26,6 +29,7 @@ def init_db():
     conn.commit()
     conn.close()
 
+# 🚀 /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [KeyboardButton("🚶‍♂️ مستخدم"), KeyboardButton("🚚 مندوب")]
@@ -35,32 +39,36 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     )
 
-async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# 🧍‍♂️ المستخدم أو المندوب
+async def handle_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    text = update.message.text
+    text = update.message.text.strip()
 
     if text == "🚶‍♂️ مستخدم":
         user_states[user_id] = "awaiting_order"
         await update.message.reply_text("اكتب طلبك بالتفصيل (مثال: 1 كيلو طماطم، 2 رغيف)...")
-
     elif text == "🚚 مندوب":
         await update.message.reply_text("شكرًا لانضمامك كمندوب! هنبعتلك الطلبات القريبة أول ما توصل.")
 
-    elif user_states.get(user_id) == "awaiting_order":
+# ✍️ كتابة الطلب
+async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_states.get(user_id) == "awaiting_order":
+        order_text = update.message.text.strip()
         conn = sqlite3.connect("wasalny/data.db")
         cursor = conn.cursor()
-        cursor.execute("INSERT INTO orders (user_id, text, status) VALUES (?, ?, ?)", (user_id, text, "قيد الانتظار"))
+        cursor.execute("INSERT INTO orders (user_id, text, status) VALUES (?, ?, ?)", (user_id, order_text, "قيد الانتظار"))
         conn.commit()
         conn.close()
 
-        await update.message.reply_text(f"✅ تم استلام طلبك: {text}
-📢 جارٍ إرسال الطلب للمناديب...")
+        await update.message.reply_text(f"✅ تم استلام طلبك: {order_text}\n📢 جارٍ إرسال الطلب للمناديب...")
         user_states[user_id] = None
 
-app = ApplicationBuilder().token(TOKEN).build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages))
-
+# ▶️ شغّل البوت
 if __name__ == "__main__":
     init_db()
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_order))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_role))
     app.run_polling()
