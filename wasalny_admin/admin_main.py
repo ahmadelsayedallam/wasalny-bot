@@ -9,58 +9,49 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 
 logging.basicConfig(level=logging.INFO)
 
-def create_tables():
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS orders (
-            id SERIAL PRIMARY KEY,
-            user_id BIGINT NOT NULL,
-            text TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'قيد الانتظار'
-        )
-        """)
-        conn.commit()
+
+        cursor.execute("SELECT id, user_id, governorate, text, status FROM orders ORDER BY id DESC LIMIT 10")
+        orders = cursor.fetchall()
+        if not orders:
+            await update.message.reply_text("❌ لا يوجد طلبات حتى الآن.")
+            return
+
+        msg = "📋 آخر 10 طلبات:\n\n"
+        for order in orders:
+            msg += f"🆔 الطلب: {order[0]}\n"
+            msg += f"👤 المستخدم: {order[1]}\n"
+            msg += f"📍 المحافظة: {order[2]}\n"
+            msg += f"📦 الطلب: {order[3]}\n"
+            msg += f"📌 الحالة: {order[4]}\n"
+            msg += "------------------------\n"
+
+            cursor.execute("SELECT agent_id, price, eta FROM offers WHERE order_id = %s", (order[0],))
+            offers = cursor.fetchall()
+            if offers:
+                msg += "💬 العروض:\n"
+                for offer in offers:
+                    msg += f"🧍‍♂️ مندوب: {offer[0]} | 💵 السعر: {offer[1]} | ⏱️ الوقت: {offer[2]}\n"
+            else:
+                msg += "❌ لا توجد عروض بعد.\n"
+
+            msg += "========================\n\n"
+
+        await update.message.reply_text(msg[:4000])
+
         cursor.close()
         conn.close()
-        logging.info("✅ جدول orders موجود أو تم إنشاؤه بنجاح.")
     except Exception as e:
-        logging.error(f"❌ فشل إنشاء جدول orders: {e}")
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    conn = psycopg2.connect(DATABASE_URL)
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT id, user_id, text, status FROM orders ORDER BY id DESC LIMIT 10")
-    orders = cursor.fetchall()
-    cursor.close()
-    conn.close()
-
-    if not orders:
-        await update.message.reply_text("مافيش طلبات حتى الآن.")
-        return
-
-    message = "📝 *الطلبات الأخيرة:*\n\n"
-    for order in orders:
-        order_id, user_id, order_text, status = order
-        message += f"#{order_id} - مستخدم: {user_id}\nالطلب: {order_text}\nالحالة: {status}\n\n"
-
-    await update.message.reply_text(message, parse_mode="Markdown")
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    help_text = (
-        "/start - عرض الطلبات الأخيرة\n"
-        "/help - هذه الرسالة"
-    )
-    await update.message.reply_text(help_text)
+        logging.error(f"❌ فشل عرض الطلبات: {e}")
+        await update.message.reply_text("❌ حصل خطأ أثناء استعراض الطلبات.")
 
 def main():
-    create_tables()
     app = ApplicationBuilder().token(BOT_TOKEN_ADMIN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    logging.info("بوت الإدارة شغال...")
+    logging.info("📊 بوت الإدارة شغال...")
     app.run_polling()
 
 if __name__ == "__main__":
