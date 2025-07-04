@@ -1,40 +1,40 @@
-import sqlite3
 import logging
+import os
+import psycopg2
 from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    ContextTypes,
-)
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-BOT_TOKEN_ADMIN = "8039901966:AAFx8Mp0v33CSro0Ii5Im0howXpl99EUCCg"
-DB_PATH = "wasalny/data.db"  # نفس مسار قاعدة بيانات البوت الرئيسي
+BOT_TOKEN_ADMIN = os.getenv("BOT_TOKEN_ADMIN")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+logging.basicConfig(level=logging.INFO)
 
 def create_tables():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS orders (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL,
-        text TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'قيد الانتظار'
-    )
-    """)
-    conn.commit()
-    conn.close()
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS orders (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL,
+            text TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'قيد الانتظار'
+        )
+        """)
+        conn.commit()
+        cursor.close()
+        conn.close()
+        logging.info("✅ جدول orders موجود أو تم إنشاؤه بنجاح.")
+    except Exception as e:
+        logging.error(f"❌ فشل إنشاء جدول orders: {e}")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    conn = sqlite3.connect(DB_PATH)
+    conn = psycopg2.connect(DATABASE_URL)
     cursor = conn.cursor()
 
     cursor.execute("SELECT id, user_id, text, status FROM orders ORDER BY id DESC LIMIT 10")
     orders = cursor.fetchall()
+    cursor.close()
     conn.close()
 
     if not orders:
@@ -56,13 +56,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(help_text)
 
 def main():
-    create_tables()  # انشئ الجدول لو مش موجود
-
+    create_tables()
     app = ApplicationBuilder().token(BOT_TOKEN_ADMIN).build()
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
-
     logging.info("بوت الإدارة شغال...")
     app.run_polling()
 
