@@ -7,7 +7,7 @@ from telegram.ext import (
     ContextTypes,
 )
 
-BOT_TOKEN_ADMIN = "YOUR_ADMIN_BOT_TOKEN"
+BOT_TOKEN_ADMIN = "8039901966:AAFx8Mp0v33CSro0Ii5Im0howXpl99EUCCg"
 DB_PATH = "wasalny/data.db"  # نفس مسار قاعدة بيانات البوت الرئيسي
 
 logging.basicConfig(
