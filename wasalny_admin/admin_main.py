@@ -2,14 +2,13 @@ import logging
 import os
 import psycopg2
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 TOKEN = os.getenv("BOT_TOKEN_ADMIN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 logging.basicConfig(level=logging.INFO)
 
-# حالة انتظار اختيار عرض من العميل: user_id -> order_id
 client_waiting_choice = {}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -91,15 +90,9 @@ async def choose_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
-        # تحديث حالة العرض إلى "تم الاختيار"
         cursor.execute("UPDATE offers SET status = 'تم الاختيار' WHERE id = %s", (offer_id,))
-
-        # تحديث حالة الطلب إلى "قيد التنفيذ"
         cursor.execute("UPDATE orders SET status = 'قيد التنفيذ' WHERE id = %s", (order_id,))
-
-        # إلغاء باقي العروض الأخرى لنفس الطلب
         cursor.execute("UPDATE offers SET status = 'مرفوض' WHERE order_id = %s AND id != %s", (order_id, offer_id))
-
         conn.commit()
         cursor.close()
         conn.close()
@@ -118,8 +111,8 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("orders", list_orders))
     app.add_handler(CallbackQueryHandler(show_offers, pattern=r"^show_offers_\d+$"))
-    app.add_handler(CallbackQueryHandler(choice := choose_offer, pattern=r"^choose_offer_\d+_\d+$"))
-    app.add_handler(CommandHandler(None, unknown_command))
+    app.add_handler(CallbackQueryHandler(choose_offer, pattern=r"^choose_offer_\d+_\d+$"))
+    app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
     logging.info("🛠️ بوت الإدارة شغال...")
     app.run_polling()
 
