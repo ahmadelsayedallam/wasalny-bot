@@ -76,6 +76,7 @@ async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # تشغيل البوت
 if __name__ == "__main__":
     init_db()
+    print("⚙️ Initializing database...")
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_role))
