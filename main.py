@@ -5,7 +5,7 @@ from telegram import Update, KeyboardButton, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
 # 🔐 التوكن
-TOKEN = "8119170278:AAGaTnTRsg2Fpwrmo9UWZYm17_1cK4GE1ec"
+TOKEN = "8119170278:AAFQ_orcaoQL0wKVqtqXchxcivip6qBEo3Q"
 
 # 🗂️ الحالة المؤقتة للمستخدمين
 user_states = {}
