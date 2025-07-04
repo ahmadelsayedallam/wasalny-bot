@@ -12,7 +12,6 @@ logging.basicConfig(level=logging.INFO)
 
 user_states = {}
 user_data = {}
-# لربط الطلب الحالي اللي المندوب بيرد عليه
 agent_current_order = {}
 
 def create_tables():
@@ -55,9 +54,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
 
-    # إذا المندوب في حالة انتظار رد عرض
+    # رد المندوب على عرض السعر والوقت
     if user_states.get(user_id) == "awaiting_offer":
-        # نتحقق من الرد هل فيه سعر ووقت بصيغة صحيحة: مثلا "50 جنيه 30 دقيقة"
         pattern = r"(\d+(\.\d+)?)\s*(جنيه|EGP)?\s+(\d+)\s*(دقيقة|دقايق|دقائق)"
         match = re.search(pattern, text)
         if not match:
@@ -76,7 +74,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             conn = psycopg2.connect(DATABASE_URL)
             cursor = conn.cursor()
-            # نحفظ العرض في جدول offers
             cursor.execute(
                 "INSERT INTO offers (order_id, agent_id, price, eta, status) VALUES (%s, %s, %s, %s, %s)",
                 (order_id, user_id, price, eta, "قيد الانتظار")
@@ -116,18 +113,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             order_id = cursor.fetchone()[0]
             conn.commit()
 
-            # نجيب المناديب في نفس المحافظة
             cursor.execute("SELECT user_id FROM agents WHERE governorate = %s", (governorate,))
             agents = cursor.fetchall()
 
             for agent in agents:
                 aid = agent[0]
-                # حفظ حالة انتظار عرض لكل مندوب (الطلب اللي لازم يرد عليه)
                 agent_current_order[aid] = order_id
                 try:
                     await context.bot.send_message(chat_id=aid, text=f"📦 طلب جديد في {governorate}:\n{text}\n\n*رد بالعرض بالسعر والوقت* مثل:\n50 جنيه 30 دقيقة")
                 except Exception as e:
-                    logging.warning(f"⚠️ فشل في إرسال الطلب للمندوب {aid}: {e}")
+                    logging.warning(f"⚠️ فشل إرسال الطلب للمندوب {aid}: {e}")
 
             cursor.close()
             conn.close()
