@@ -1,4 +1,3 @@
-
 import logging, sqlite3, os
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
@@ -24,15 +23,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("🚫 لا يوجد طلبات حتى الآن.")
             return
 
-        msg = "📋 الطلبات الحالية:
-
-"
+        msg = "📋 الطلبات الحالية:\n\n"
         for o in orders:
-            msg += f"📦 #{o[0]} - الحالة: {o[3]}
-👤 المستخدم: {o[1]}
-📝 الطلب: {o[2]}
-
-"
+            msg += f"📦 #{o[0]} - الحالة: {o[3]}\n👤 المستخدم: {o[1]}\n📝 الطلب: {o[2]}\n\n"
 
         await update.message.reply_text(msg)
     except Exception as e:
