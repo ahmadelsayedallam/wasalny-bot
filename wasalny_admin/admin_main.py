@@ -2,7 +2,7 @@ import logging, sqlite3, os
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-TOKEN = "8039901966:AAFxwP_rEjGBR-xTOQ8351WfZ2L5RXWXrvc"
+TOKEN = "8039901966:AAFx8Mp0v33CSro0Ii5Im0howXpl99EUCCg"
 
 logging.basicConfig(level=logging.INFO)
 
