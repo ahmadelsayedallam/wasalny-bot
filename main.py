@@ -4,16 +4,16 @@ import os
 from telegram import Update, KeyboardButton, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
-# 🔐 التوكن
-TOKEN = "8119170278:AAGfqFrfes_0g-EmbBBk2K6e6DjQflwlBg0"
+# التوكن من المتغيرات البيئية
+TOKEN = os.getenv("TOKEN")
 
-# 🔧 تهيئة اللوج
+# تشغيل اللوجات
 logging.basicConfig(level=logging.INFO)
 
-# 🗂️ الحالة المؤقتة للمستخدمين
+# حالات المستخدمين المؤقتة
 user_states = {}
 
-# ✅ إنشاء قاعدة البيانات لو مش موجودة
+# ✅ إنشاء قاعدة البيانات تلقائيًا
 def init_db():
     os.makedirs("wasalny", exist_ok=True)
     conn = sqlite3.connect("wasalny/data.db")
@@ -39,32 +39,39 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     )
 
-# 👥 التعامل مع اختيار الدور
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# 👤 التعامل مع الدور
+async def handle_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    text = update.message.text
+
+    if text == "🚶‍♂️ مستخدم":
+        user_states[user_id] = "awaiting_order"
+        await update.message.reply_text("اكتب طلبك بالتفصيل (مثال: 1 كيلو طماطم، 2 رغيف)...")
+    elif text == "🚚 مندوب":
+        await update.message.reply_text("✅ شكرًا لانضمامك كمندوب! هنبعتلك الطلبات القريبة أول ما توصل.")
+
+# 📦 استقبال الطلب
+async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text
 
     if user_states.get(user_id) == "awaiting_order":
-        order_text = text
         conn = sqlite3.connect("wasalny/data.db")
         cursor = conn.cursor()
-        cursor.execute("INSERT INTO orders (user_id, text, status) VALUES (?, ?, ?)", (user_id, order_text, "قيد الانتظار"))
+        cursor.execute("INSERT INTO orders (user_id, text, status) VALUES (?, ?, ?)", (user_id, text, "قيد الانتظار"))
         conn.commit()
         conn.close()
-        await update.message.reply_text(f"✅ تم استلام طلبك: {order_text}\n📢 جارٍ إرسال الطلب للمناديب...")
+
+        await update.message.reply_text(f"✅ تم استلام طلبك: {text}\n📢 جارٍ إرسال الطلب للمناديب...")
         user_states[user_id] = None
 
-    elif text == "🚶‍♂️ مستخدم":
-        user_states[user_id] = "awaiting_order"
-        await update.message.reply_text("اكتب طلبك بالتفصيل (مثال: 1 كيلو طماطم، 2 رغيف)...")
+# ✅ إعداد التطبيق
+app = ApplicationBuilder().token(TOKEN).build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_role))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_order))
 
-    elif text == "🚚 مندوب":
-        await update.message.reply_text("شكرًا لانضمامك كمندوب! هنبعتلك الطلبات القريبة أول ما توصل.")
-
-# 🔁 تشغيل البوت
+# ✅ بدء التشغيل
 if __name__ == "__main__":
     init_db()
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.run_polling()
