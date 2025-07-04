@@ -69,6 +69,6 @@ app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_role))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_order))
 
-if __name__ == "__main__":
-    init_db()
-    app.run_polling()
+init_db()
+app.run_polling()
+
