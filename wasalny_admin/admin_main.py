@@ -7,8 +7,8 @@ from telegram.ext import (
     ContextTypes,
 )
 
-BOT_TOKEN_ADMIN = "8039901966:AAFx8Mp0v33CSro0Ii5Im0howXpl99EUCCg"
-DB_PATH = "wasalny.db"
+BOT_TOKEN_ADMIN = "YOUR_ADMIN_BOT_TOKEN"
+DB_PATH = "wasalny/data.db"  # نفس مسار قاعدة بيانات البوت الرئيسي
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -22,8 +22,8 @@ def create_tables():
     CREATE TABLE IF NOT EXISTS orders (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
-        order_text TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending'
+        text TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'قيد الانتظار'
     )
     """)
     conn.commit()
@@ -33,7 +33,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    cursor.execute("SELECT id, user_id, order_text, status FROM orders ORDER BY id DESC LIMIT 10")
+    cursor.execute("SELECT id, user_id, text, status FROM orders ORDER BY id DESC LIMIT 10")
     orders = cursor.fetchall()
     conn.close()
 
@@ -63,7 +63,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
 
-    print("بوت الإدارة شغال...")
+    logging.info("بوت الإدارة شغال...")
     app.run_polling()
 
 if __name__ == "__main__":
