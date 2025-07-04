@@ -5,20 +5,29 @@ from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     ContextTypes,
-    MessageHandler,
-    filters,
 )
 
-# اضبط التوكن هنا أو استخدم متغير بيئة
 BOT_TOKEN_ADMIN = "8039901966:AAFx8Mp0v33CSro0Ii5Im0howXpl99EUCCg"
-
-# مسار ملف قاعدة البيانات
 DB_PATH = "wasalny.db"
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+
+def create_tables():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        order_text TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending'
+    )
+    """)
+    conn.commit()
+    conn.close()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect(DB_PATH)
@@ -42,12 +51,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
         "/start - عرض الطلبات الأخيرة\n"
-        "/help - هذه الرسالة\n"
-        # ممكن تضيف أوامر تانية هنا حسب الحاجة
+        "/help - هذه الرسالة"
     )
     await update.message.reply_text(help_text)
 
 def main():
+    create_tables()  # انشئ الجدول لو مش موجود
+
     app = ApplicationBuilder().token(BOT_TOKEN_ADMIN).build()
 
     app.add_handler(CommandHandler("start", start))
