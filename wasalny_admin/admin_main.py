@@ -4,7 +4,7 @@ import psycopg2
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
-TOKEN = os.getenv("ADMIN_TOKEN")
+TOKEN = os.getenv("BOT_TOKEN_ADMIN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 logging.basicConfig(level=logging.INFO)
