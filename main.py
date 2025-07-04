@@ -14,7 +14,7 @@ user_states = {}
 # ✅ إنشاء قاعدة البيانات لو مش موجودة
 def init_db():
     os.makedirs("wasalny", exist_ok=True)
-    conn = sqlite3.connect("wasalny/data.db")
+    conn = sqlite3.connect("data.db")
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS orders (
