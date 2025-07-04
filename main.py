@@ -1,6 +1,7 @@
 import logging
 import sqlite3
 import os
+import subprocess
 from telegram import Update, KeyboardButton, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
@@ -13,6 +14,7 @@ user_states = {}
 def init_db():
     try:
         os.makedirs("wasalny", exist_ok=True)
+        subprocess.run(["ls", "-R", "."], check=False)  # دي بتطبع الفولدرات كلها
         conn = sqlite3.connect("wasalny/data.db")
         cursor = conn.cursor()
         cursor.execute('''
@@ -50,11 +52,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cursor.execute("INSERT INTO orders (user_id, text, status) VALUES (?, ?, ?)", (user_id, order, "قيد الانتظار"))
             conn.commit()
             conn.close()
-            logging.info("✅ تم حفظ الطلب في القاعدة.")
-            await update.message.reply_text(f"✅ استلمنا طلبك: {order}")
+            logging.info(f"✅ تم حفظ الطلب للمستخدم {user_id}: {order}")
+            await update.message.reply_text(f"✅ تم استلام طلبك: {order}\n📢 جارٍ إرسال الطلب للمناديب...")
         except Exception as e:
             logging.error(f"❌ فشل حفظ الطلب: {e}")
-            await update.message.reply_text("عذراً، فشل حفظ طلبك. حاول مرة تانية.")
+            await update.message.reply_text("❌ عذراً، حصل خطأ أثناء حفظ الطلب.")
         user_states[user_id] = None
         return
 
