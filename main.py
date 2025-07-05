@@ -115,4 +115,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(Messa_
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_role))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.run_polling()
