@@ -120,32 +120,32 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # 📸 استقبال صورة البطاقة
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if user_states.get(user_id) != "awaiting_id_photo":
-        return
+    if user_states.get(user_id) == "awaiting_id_photo":
+        photo = update.message.photo[-1]
+        photo_file = await context.bot.get_file(photo.file_id)
+        photo_url = photo_file.file_path  # رابط مباشر للصورة
 
-    photo_file_id = update.message.photo[-1].file_id
-    full_name = user_data[user_id]["full_name"]
-    governorate = user_data[user_id]["governorate"]
-    area = user_data[user_id]["area"]
+        full_name = user_data[user_id].get("full_name")
+        governorate = user_data[user_id].get("governorate")
+        area = user_data[user_id].get("area")
 
-    try:
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO agents (user_id, full_name, governorate, area, id_photo_file_id, is_verified)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """, (user_id, full_name, governorate, area, photo_file_id, False))
-        conn.commit()
-        cur.close()
-        conn.close()
-        logging.info(f"📸 تم استقبال صورة من {user_id}, file_id: {photo_file_id}")
-        await update.message.reply_text("✅ تم استلام البطاقة. سيتم مراجعتها من الإدارة قبل تفعيل حسابك.")
-    except Exception as e:
-        logging.error(f"❌ فشل في تسجيل المندوب: {e}")
-        await update.message.reply_text("❌ حصل خطأ أثناء حفظ بياناتك.")
-
-    user_states[user_id] = None
-    user_data[user_id] = {}
+        try:
+            conn = get_conn()
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO agents (user_id, full_name, governorate, area, id_photo_url, is_verified)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (user_id, full_name, governorate, area, photo_url, False))
+            conn.commit()
+            cur.close()
+            conn.close()
+            logging.info(f"📸 تم استقبال صورة من {user_id}, url: {photo_url}")
+            await update.message.reply_text("✅ تم استلام البطاقة. سيتم مراجعتها من الإدارة قبل تفعيل حسابك.")
+        except Exception as e:
+            logging.error(f"❌ فشل في تسجيل المندوب: {e}")
+            await update.message.reply_text("❌ حصل خطأ أثناء حفظ بياناتك.")
+        user_states[user_id] = None
+        user_data[user_id] = {}
 
 # تشغيل البوت
 if __name__ == "__main__":
