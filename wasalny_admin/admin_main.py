@@ -31,7 +31,7 @@ async def pending_agents(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn = get_conn()
         cur = conn.cursor()
         cur.execute("""
-            SELECT user_id, full_name, governorate, area, id_photo_file_id
+            SELECT user_id, full_name, governorate, area, id_photo_url
             FROM agents
             WHERE is_verified = FALSE
         """)
