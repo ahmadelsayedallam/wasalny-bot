@@ -8,7 +8,7 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 )
 
-# إعداد المتغيرات
+# إعداد البيئة
 TOKEN = os.getenv("TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
@@ -37,55 +37,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("أهلاً بيك! اختار دورك:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
     user_states[user_id] = None
 
+# ... باقي التعامل مع المستخدم العادي (مش هنعدله)
+
 async def handle_user_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text
-
-    if text == "🚶‍♂️ مستخدم":
-        user_states[user_id] = "awaiting_governorate"
-        await update.message.reply_text("اختار محافظتك:", reply_markup=ReplyKeyboardMarkup([[g] for g in GOVERNORATES], resize_keyboard=True))
-        return
-
-    if user_states.get(user_id) == "awaiting_governorate":
-        if text not in GOVERNORATES:
-            await update.message.reply_text("❌ اختر محافظة من القائمة.")
-            return
-        user_data[user_id] = {"governorate": text}
-        user_states[user_id] = "awaiting_area"
-        await update.message.reply_text("اختار الحي:", reply_markup=ReplyKeyboardMarkup([[a] for a in AREAS], resize_keyboard=True))
-        return
-
-    if user_states.get(user_id) == "awaiting_area":
-        if text not in AREAS:
-            await update.message.reply_text("❌ اختر حي من القائمة.")
-            return
-        user_data[user_id]["area"] = text
-        user_states[user_id] = "awaiting_order"
-        await update.message.reply_text("اكتب تفاصيل طلبك:", reply_markup=ReplyKeyboardRemove())
-        return
-
-    if user_states.get(user_id) == "awaiting_order":
-        order_text = text
-        governorate = user_data[user_id]["governorate"]
-        area = user_data[user_id]["area"]
-        try:
-            conn = get_conn()
-            cur = conn.cursor()
-            cur.execute("""
-                INSERT INTO orders (user_id, governorate, area, text, status)
-                VALUES (%s, %s, %s, %s, %s)
-            """, (user_id, governorate, area, order_text, "قيد الانتظار"))
-            conn.commit()
-            cur.close()
-            conn.close()
-            logging.info(f"✅ تم تسجيل الطلب من {user_id}: {order_text}")
-            await update.message.reply_text("✅ تم تسجيل طلبك! سيتم إرسال الطلب للمناديب القريبين.")
-        except Exception as e:
-            logging.error(f"❌ فشل حفظ الطلب: {e}")
-            await update.message.reply_text("❌ حصل خطأ أثناء تسجيل الطلب.")
-        user_states[user_id] = None
-        user_data[user_id] = {}
-        return
 
     if text == "🚚 مندوب":
         user_states[user_id] = "awaiting_agent_name"
@@ -123,35 +79,35 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_states.get(user_id) == "awaiting_id_photo":
         photo = update.message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
-        file_path = await file.download_to_drive()
-
-        # رفع الصورة على Cloudinary
-        try:
-            result = cloudinary.uploader.upload(file_path)
-            photo_url = result.get("secure_url")
-        except Exception as e:
-            logging.error(f"❌ خطأ في رفع الصورة لـ Cloudinary: {e}")
-            await update.message.reply_text("❌ حصل خطأ أثناء رفع الصورة.")
-            return
-
-        full_name = user_data[user_id].get("full_name")
-        governorate = user_data[user_id].get("governorate")
-        area = user_data[user_id].get("area")
+        file_path = f"{user_id}_id.jpg"
+        await file.download_to_drive(file_path)
 
         try:
+            upload_result = cloudinary.uploader.upload(file_path)
+            image_url = upload_result.get("secure_url")
+
+            full_name = user_data[user_id].get("full_name")
+            governorate = user_data[user_id].get("governorate")
+            area = user_data[user_id].get("area")
+
             conn = get_conn()
             cur = conn.cursor()
             cur.execute("""
-                INSERT INTO agents (user_id, full_name, governorate, area, id_photo_file_id, is_verified)
+                INSERT INTO agents (user_id, full_name, governorate, area, id_photo_url, is_verified)
                 VALUES (%s, %s, %s, %s, %s, %s)
-            """, (user_id, full_name, governorate, area, photo_url, False))
+            """, (user_id, full_name, governorate, area, image_url, False))
             conn.commit()
             cur.close()
             conn.close()
+
             await update.message.reply_text("✅ تم استلام البطاقة. سيتم مراجعتها من الإدارة قبل تفعيل حسابك.")
+            logging.info(f"📸 تم رفع صورة المندوب: {image_url}")
         except Exception as e:
             logging.error(f"❌ فشل في تسجيل المندوب: {e}")
             await update.message.reply_text("❌ حصل خطأ أثناء حفظ بياناتك.")
+        finally:
+            if os.path.exists(file_path):
+                os.remove(file_path)
 
         user_states[user_id] = None
         user_data[user_id] = {}
@@ -159,6 +115,4 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_role))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    app.run_polling()
+    app.add_handler(Messa_
