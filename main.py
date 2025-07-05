@@ -1,13 +1,22 @@
 import os
 import logging
 import psycopg2
+import cloudinary
+import cloudinary.uploader
 from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, CallbackQueryHandler, filters
 )
 
+# بيئة العمل
 TOKEN = os.getenv("TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
+
+cloudinary.config(
+    cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
+    api_key=os.getenv("CLOUDINARY_API_KEY"),
+    api_secret=os.getenv("CLOUDINARY_API_SECRET")
+)
 
 logging.basicConfig(level=logging.INFO)
 user_states = {}
@@ -27,6 +36,25 @@ def get_conn():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+
+    # تحقق من حالة المندوب
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT is_verified FROM agents WHERE user_id = %s", (user_id,))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+
+        if row:
+            if row[0]:
+                await update.message.reply_text("✅ تم تفعيل حسابك كمندوب.")
+            else:
+                await update.message.reply_text("⏳ طلبك قيد المراجعة.")
+            return
+    except Exception as e:
+        logging.error(f"❌ فشل التحقق من حالة المندوب: {e}")
+
     keyboard = [[KeyboardButton("🚶‍♂️ مستخدم"), KeyboardButton("🚚 مندوب")]]
     await update.message.reply_text("أهلاً بيك! اختار دورك:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
     user_states[user_id] = None
@@ -97,23 +125,6 @@ async def handle_user_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if text == "🚚 مندوب":
-        try:
-            conn = get_conn()
-            cur = conn.cursor()
-            cur.execute("SELECT is_verified FROM agents WHERE user_id = %s", (user_id,))
-            row = cur.fetchone()
-            cur.close()
-            conn.close()
-
-            if row:
-                if row[0]:
-                    await update.message.reply_text("✅ تم تفعيل حسابك كمندوب.")
-                else:
-                    await update.message.reply_text("⏳ طلبك قيد المراجعة.")
-                return
-        except Exception as e:
-            logging.error(f"❌ فشل التحقق من حالة المندوب: {e}")
-
         user_states[user_id] = "awaiting_agent_name"
         await update.message.reply_text("اكتب اسمك الكامل:")
         return
@@ -147,10 +158,21 @@ async def handle_user_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_states.get(user_id) == "awaiting_id_photo":
-        file_id = update.message.photo[-1].file_id
-        full_name = user_data[user_id].get("full_name")
-        governorate = user_data[user_id].get("governorate")
-        area = user_data[user_id].get("area")
+        file = await context.bot.get_file(update.message.photo[-1].file_id)
+        photo_path = f"{user_id}_id_photo.jpg"
+        await file.download_to_drive(photo_path)
+
+        try:
+            result = cloudinary.uploader.upload(photo_path)
+            photo_url = result["secure_url"]
+        except Exception as e:
+            logging.error(f"❌ فشل رفع الصورة إلى Cloudinary: {e}")
+            await update.message.reply_text("❌ فشل رفع الصورة.")
+            return
+
+        full_name = user_data[user_id]["full_name"]
+        governorate = user_data[user_id]["governorate"]
+        area = user_data[user_id]["area"]
 
         try:
             conn = get_conn()
@@ -158,14 +180,60 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cur.execute("""
                 INSERT INTO agents (user_id, full_name, governorate, area, id_photo_url, is_verified)
                 VALUES (%s, %s, %s, %s, %s, FALSE)
-            """, (user_id, full_name, governorate, area, file_id))
+            """, (user_id, full_name, governorate, area, photo_url))
             conn.commit()
             cur.close()
             conn.close()
-            await update.message.reply_text("✅ تم استلام البطاقة. سيتم مراجعتها من الإدارة قبل تفعيل حسابك.")
+            await update.message.reply_text("✅ تم استلام البطاقة. سيتم مراجعتها من الإدارة.")
         except Exception as e:
             logging.error(f"❌ فشل حفظ بيانات المندوب: {e}")
             await update.message.reply_text("❌ حصل خطأ أثناء حفظ البيانات.")
+
+        user_states[user_id] = None
+        user_data[user_id] = {}
+
+async def handle_offer_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data.startswith("offer_"):
+        order_id = int(data.split("_")[1])
+        user_id = query.from_user.id
+        user_data[user_id] = {"order_id": order_id}
+        user_states[user_id] = "awaiting_offer_price"
+        keyboard = [[InlineKeyboardButton(price, callback_data=f"price_{price}")] for price in PRICE_OPTIONS]
+        await query.message.reply_text("اختار السعر المناسب:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif data.startswith("price_"):
+        price = data.split("_")[1]
+        user_id = update.effective_user.id
+        user_data[user_id]["price"] = price
+        user_states[user_id] = "awaiting_offer_time"
+        keyboard = [[InlineKeyboardButton(time, callback_data=f"time_{time}")] for time in TIME_OPTIONS]
+        await update.callback_query.message.reply_text("اختار الوقت المتوقع للتوصيل:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif data.startswith("time_"):
+        time = data.split("_")[1]
+        user_id = update.effective_user.id
+        offer = user_data.get(user_id, {})
+        order_id = offer.get("order_id")
+        price = offer.get("price")
+
+        try:
+            conn = get_conn()
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO offers (order_id, agent_id, price, estimated_time)
+                VALUES (%s, %s, %s, %s)
+            """, (order_id, user_id, price, time))
+            conn.commit()
+            cur.close()
+            conn.close()
+            await update.callback_query.message.reply_text("✅ تم إرسال عرضك بنجاح!")
+        except Exception as e:
+            logging.error(f"❌ فشل حفظ العرض: {e}")
+            await update.callback_query.message.reply_text("❌ حصل خطأ أثناء حفظ العرض.")
         user_states[user_id] = None
         user_data[user_id] = {}
 
@@ -174,4 +242,5 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_role))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.add_handler(CallbackQueryHandler(handle_offer_button))
     app.run_polling()
