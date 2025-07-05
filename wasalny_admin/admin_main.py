@@ -6,7 +6,7 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler, filters
 )
 
-TOKEN = os.getenv("TOKEN")
+TOKEN = os.getenv("BOT_TOKEN_ADMIN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_ID = 1044357384  # تم تحديثه حسب طلبك
 
