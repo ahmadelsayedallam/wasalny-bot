@@ -1,22 +1,22 @@
+# ✅ كود بوت الإدارة Wasalny Admin Bot بعد التعديلات
 import os
 import logging
 import psycopg2
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler, filters
 )
 
 TOKEN = os.getenv("BOT_TOKEN_ADMIN")
 DATABASE_URL = os.getenv("DATABASE_URL")
-ADMIN_ID = 1044357384  # تم تحديثه حسب طلبك
+ADMIN_ID = 1044357384  # معرف الأدمن الأساسي
 
 logging.basicConfig(level=logging.INFO)
 
-# الاتصال بقاعدة البيانات
 def get_conn():
     return psycopg2.connect(DATABASE_URL)
 
-# إرسال قائمة المندوبين المنتظرين للمراجعة
+# عرض المناديب المنتظرين للمراجعة
 async def show_pending_agents(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("❌ ليس لديك صلاحية الوصول لهذا الأمر.")
@@ -49,7 +49,7 @@ async def show_pending_agents(update: Update, context: ContextTypes.DEFAULT_TYPE
         logging.error(f"❌ فشل في جلب المندوبين: {e}")
         await update.message.reply_text("❌ حصل خطأ أثناء عرض المندوبين.")
 
-# التعامل مع أزرار القبول والرفض
+# التعامل مع القبول أو الرفض
 async def handle_review_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -79,7 +79,7 @@ async def handle_review_action(update: Update, context: ContextTypes.DEFAULT_TYP
         logging.error(f"❌ فشل في مراجعة المندوب: {e}")
         await query.message.reply_text("❌ حصل خطأ أثناء تنفيذ الإجراء.")
 
-# عرض الطلبات الحالية في بوت الإدارة
+# عرض الطلبات الأخيرة
 async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("❌ ليس لديك صلاحية الوصول لهذا الأمر.")
