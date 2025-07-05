@@ -45,13 +45,16 @@ async def pending_agents(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         for agent in agents:
             user_id, full_name, governorate, area, file_id = agent
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("✅ قبول", callback_data=f"accept_{user_id}"),
+                    InlineKeyboardButton("❌ رفض", callback_data=f"reject_{user_id}")
+                ]
+            ])
+
             try:
-                keyboard = InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton("✅ قبول", callback_data=f"accept_{user_id}"),
-                        InlineKeyboardButton("❌ رفض", callback_data=f"reject_{user_id}")
-                    ]
-                ])
+                # نحاول نجيب الملف الأول نتأكد إنه صالح
+                await context.bot.get_file(file_id)
                 await context.bot.send_photo(
                     chat_id=update.effective_chat.id,
                     photo=file_id,
@@ -61,11 +64,15 @@ async def pending_agents(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             except Exception as e:
                 logging.error(f"❌ خطأ في عرض صورة المندوب: {e}")
-                await update.message.reply_text(f"👤 <b>{full_name}</b>\n📍 {governorate} - {area}\n🆔 {user_id}\n⚠️ لم يتم عرض الصورة، راجع الرابط المخزن.", parse_mode="HTML")
+                await update.message.reply_text(
+                    f"👤 <b>{full_name}</b>\n📍 {governorate} - {area}\n🆔 {user_id}\n⚠️ لم يتم عرض الصورة، راجع الرابط المخزن.",
+                    parse_mode="HTML"
+                )
 
     except Exception as e:
         logging.error(f"❌ خطأ في جلب المندوبين: {e}")
         await update.message.reply_text("❌ حدث خطأ أثناء جلب المندوبين.")
+
 
 async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
