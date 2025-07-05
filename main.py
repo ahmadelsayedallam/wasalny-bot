@@ -123,7 +123,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_states.get(user_id) == "awaiting_id_photo":
         photo = update.message.photo[-1]
         photo_file = await context.bot.get_file(photo.file_id)
-        photo_url = photo_file.file_path  # رابط مباشر للصورة
+        photo_url = f"https://api.telegram.org/file/bot{context.bot.token}/{photo_file.file_path}"
+
 
         full_name = user_data[user_id].get("full_name")
         governorate = user_data[user_id].get("governorate")
