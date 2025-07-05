@@ -11,7 +11,7 @@ TOKEN = os.getenv("BOT_TOKEN_ADMIN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "1044357384"))
 
-# إعداد اللوج
+# اللوج
 logging.basicConfig(level=logging.INFO)
 
 # الاتصال بقاعدة البيانات
@@ -34,10 +34,10 @@ async def show_pending(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for uid, name, gov, area, photo_url in agents:
         caption = f"👤 {name}\n🏙️ {gov} - {area}\n🆔 ID: {uid}"
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("✅ قبول", callback_data=f"approve_{uid}"),
-            InlineKeyboardButton("❌ رفض", callback_data=f"reject_{uid}")
-        ]])
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ قبول", callback_data=f"approve_{uid}"),
+             InlineKeyboardButton("❌ رفض", callback_data=f"reject_{uid}")]
+        ])
         await context.bot.send_photo(chat_id=ADMIN_ID, photo=photo_url, caption=caption, reply_markup=keyboard)
 
 # التعامل مع زر القبول أو الرفض
@@ -55,20 +55,21 @@ async def handle_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if is_approve:
             cur.execute("UPDATE agents SET is_verified=TRUE WHERE user_id=%s", (uid,))
-            new_caption = f"✅ تم قبول المندوب.\n🆔 ID: {uid}"
+            await context.bot.send_message(chat_id=uid, text="✅ تم قبولك كمندوب.")
+            await context.bot.send_message(chat_id=ADMIN_ID, text=f"✅ تم **قبول** المندوب {uid}.")
         else:
             cur.execute("DELETE FROM agents WHERE user_id=%s", (uid,))
-            new_caption = f"❌ تم رفض المندوب.\n🆔 ID: {uid}"
+            await context.bot.send_message(chat_id=uid, text="❌ تم رفض طلبك كمندوب.")
+            await context.bot.send_message(chat_id=ADMIN_ID, text=f"❌ تم **رفض** المندوب {uid}.")
 
         conn.commit()
         conn.close()
 
-        # تحديث الرسالة نفسها
+        # إزالة الأزرار من الرسالة
         try:
-            await query.edit_message_caption(caption=new_caption)
-        except Exception as e:
-            logging.warning(f"⚠️ لم أستطع تعديل التسمية التوضيحية: {e}")
             await query.edit_message_reply_markup(reply_markup=None)
+        except Exception as e:
+            logging.warning(f"⚠️ لم أستطع إزالة الزرار: {e}")
 
     except Exception as e:
         logging.error(f"❌ حصل خطأ أثناء معالجة الطلب: {e}")
