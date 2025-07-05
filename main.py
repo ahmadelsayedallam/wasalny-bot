@@ -1,13 +1,22 @@
 import os
 import logging
 import psycopg2
+import cloudinary
+import cloudinary.uploader
 from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 )
 
+# إعداد المتغيرات
 TOKEN = os.getenv("TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
+
+cloudinary.config(
+    cloud_name="dje6mo6va",
+    api_key="978139836161399",
+    api_secret="YZjvZOy7lit18QUNeKZG77BBg0k"
+)
 
 logging.basicConfig(level=logging.INFO)
 user_states = {}
@@ -112,8 +121,18 @@ async def handle_user_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_states.get(user_id) == "awaiting_id_photo":
-        photo_file_id = update.message.photo[-1].file_id
-        logging.info(f"📸 تم استقبال صورة من {user_id}, file_id: {photo_file_id}")
+        photo = update.message.photo[-1]
+        file = await context.bot.get_file(photo.file_id)
+        file_path = await file.download_to_drive()
+
+        # رفع الصورة على Cloudinary
+        try:
+            result = cloudinary.uploader.upload(file_path)
+            photo_url = result.get("secure_url")
+        except Exception as e:
+            logging.error(f"❌ خطأ في رفع الصورة لـ Cloudinary: {e}")
+            await update.message.reply_text("❌ حصل خطأ أثناء رفع الصورة.")
+            return
 
         full_name = user_data[user_id].get("full_name")
         governorate = user_data[user_id].get("governorate")
@@ -125,7 +144,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cur.execute("""
                 INSERT INTO agents (user_id, full_name, governorate, area, id_photo_file_id, is_verified)
                 VALUES (%s, %s, %s, %s, %s, %s)
-            """, (user_id, full_name, governorate, area, photo_file_id, False))
+            """, (user_id, full_name, governorate, area, photo_url, False))
             conn.commit()
             cur.close()
             conn.close()
@@ -133,6 +152,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logging.error(f"❌ فشل في تسجيل المندوب: {e}")
             await update.message.reply_text("❌ حصل خطأ أثناء حفظ بياناتك.")
+
         user_states[user_id] = None
         user_data[user_id] = {}
 
