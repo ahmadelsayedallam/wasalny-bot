@@ -16,7 +16,7 @@ logging.basicConfig(level=logging.INFO)
 def get_conn():
     return psycopg2.connect(DATABASE_URL)
 
-# عرض المندوبين في الانتظار
+# عرض المندوبين قيد المراجعة
 async def show_pending(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return await update.message.reply_text("❌ ليس لديك صلاحية.")
@@ -38,10 +38,14 @@ async def show_pending(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption = f"👤 {full_name}\n🏙️ {gov} - {area}\nID: {uid}"
         await context.bot.send_photo(chat_id=ADMIN_ID, photo=photo_url, caption=caption, reply_markup=kb)
 
-# معالجة الضغط على زر القبول أو الرفض
+# اختبار الضغط على زر القبول / الرفض
 async def handle_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+
+    # تسجيل البيانات للتأكيد
+    print("📥 زرار اتداس:", query.data)
+    await context.bot.send_message(chat_id=ADMIN_ID, text=f"📥 ضغطت على: {query.data}")
 
     data = query.data
     uid = int(data.split("_")[1])
@@ -59,7 +63,7 @@ async def handle_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=uid, text="❌ تم رفضك.")
         await context.bot.send_message(chat_id=ADMIN_ID, text=f"❌ تم **رفض** المندوب {uid}.")
 
-    # إزالة الزر من الرسالة بعد الضغط
+    # محاولة حذف الأزرار
     try:
         await query.edit_message_reply_markup(reply_markup=None)
     except Exception as e:
@@ -89,6 +93,8 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # تشغيل البوت
 if __name__ == "__main__":
+    print("🚀 تشغيل بوت الإدارة...")
+    print("🔐 التوكن المستخدم:", TOKEN)
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", show_pending))
