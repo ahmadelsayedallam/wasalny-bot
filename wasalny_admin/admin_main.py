@@ -2,14 +2,11 @@ import os
 import logging
 import psycopg2
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, CallbackQueryHandler,
-    ContextTypes
-)
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
-BOT_TOKEN_ADMIN = os.getenv("BOT_TOKEN_ADMIN")
+TOKEN = os.getenv("ADMIN_BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
-ADMIN_ID = 1044357384
+ADMIN_ID = int(os.getenv("ADMIN_ID"))  # لازم تضيفه في Railway أو البيئة الخارجية
 
 logging.basicConfig(level=logging.INFO)
 
@@ -18,15 +15,13 @@ def get_conn():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("❌ ليس لديك صلاحية الوصول.")
+        await update.message.reply_text("❌ غير مصرح لك باستخدام هذا البوت.")
         return
-    await update.message.reply_text("✅ أهلاً بك في لوحة إدارة وصّلني.\nاكتب /pending_agents لعرض طلبات التسجيل.\nاكتب /orders لعرض الطلبات والعروض.")
+    await update.message.reply_text("👮‍♂️ مرحباً بك في لوحة إدارة وصّلني.")
 
-async def pending_agents(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def list_pending_agents(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("❌ ليس لديك صلاحية الوصول.")
         return
-
     try:
         conn = get_conn()
         cur = conn.cursor()
@@ -40,110 +35,57 @@ async def pending_agents(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
 
         if not agents:
-            await update.message.reply_text("✅ لا يوجد مناديب قيد المراجعة حالياً.")
+            await update.message.reply_text("✅ لا يوجد مناديب في انتظار المراجعة.")
             return
 
         for agent in agents:
-            user_id, full_name, governorate, area, file_id = agent
-            keyboard = InlineKeyboardMarkup([[
-                InlineKeyboardButton("✅ قبول", callback_data=f"accept_{user_id}"),
-                InlineKeyboardButton("❌ رفض", callback_data=f"reject_{user_id}")
-            ]])
-
-            try:
-                await context.bot.send_photo(
-                    chat_id=update.effective_chat.id,
-                    photo=file_id,
-                    caption=f"👤 <b>{full_name}</b>\n📍 {governorate} - {area}\n🆔 {user_id}",
-                    parse_mode="HTML",
-                    reply_markup=keyboard
-                )
-            except Exception as e:
-                logging.error(f"❌ خطأ في عرض صورة المندوب: {e}")
-                await update.message.reply_text(
-                    f"👤 <b>{full_name}</b>\n📍 {governorate} - {area}\n🆔 {user_id}\n⚠️ لم يتم عرض الصورة، راجع الرابط المخزن.",
-                    parse_mode="HTML"
-                )
-
+            user_id, name, gov, area, file_id = agent
+            buttons = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("✅ قبول", callback_data=f"accept_{user_id}"),
+                    InlineKeyboardButton("❌ رفض", callback_data=f"reject_{user_id}")
+                ]
+            ])
+            caption = f"👤 الاسم: {name}\n📍 المحافظة: {gov}\n🏘️ الحي: {area}"
+            await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=file_id,
+                caption=caption,
+                reply_markup=buttons
+            )
     except Exception as e:
-        logging.error(f"❌ خطأ في جلب المندوبين: {e}")
-        await update.message.reply_text("❌ حدث خطأ أثناء جلب المندوبين.")
+        logging.error(f"❌ خطأ في عرض المندوبين: {e}")
+        await update.message.reply_text("❌ حصل خطأ أثناء عرض المندوبين.")
 
-async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
     query = update.callback_query
     await query.answer()
     data = query.data
-
-    if not data.startswith("accept_") and not data.startswith("reject_"):
-        return
-
-    user_id = int(data.split("_")[1])
-    is_accept = data.startswith("accept")
-
+    action, user_id = data.split("_")
+    user_id = int(user_id)
     try:
         conn = get_conn()
         cur = conn.cursor()
-
-        if is_accept:
+        if action == "accept":
             cur.execute("UPDATE agents SET is_verified = TRUE WHERE user_id = %s", (user_id,))
             await query.edit_message_caption(caption="✅ تم قبول المندوب.")
-            try:
-                await context.bot.send_message(chat_id=user_id, text="✅ تم قبولك كمندوب! يمكنك الآن استقبال الطلبات.")
-            except Exception as e:
-                logging.error(f"❌ فشل إرسال رسالة القبول: {e}")
-        else:
+            await context.bot.send_message(chat_id=user_id, text="✅ تم تفعيل حسابك كمندوب! يمكنك الآن استقبال الطلبات.")
+        elif action == "reject":
             cur.execute("DELETE FROM agents WHERE user_id = %s", (user_id,))
             await query.edit_message_caption(caption="❌ تم رفض المندوب.")
-            try:
-                await context.bot.send_message(chat_id=user_id, text="❌ تم رفض طلب تسجيلك كمندوب.")
-            except Exception as e:
-                logging.error(f"❌ فشل إرسال رسالة الرفض: {e}")
-
+            await context.bot.send_message(chat_id=user_id, text="❌ تم رفض تسجيلك كمندوب. يمكنك المحاولة مرة أخرى لاحقًا.")
         conn.commit()
         cur.close()
         conn.close()
     except Exception as e:
-        logging.error(f"❌ خطأ أثناء تنفيذ الإجراء: {e}")
-        await query.edit_message_caption(caption="❌ حدث خطأ أثناء تنفيذ العملية.")
-
-async def orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("❌ ليس لديك صلاحية الوصول.")
-        return
-
-    try:
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT o.id, o.text, o.status, o.governorate, o.area,
-            COUNT(offers.id) as offer_count
-            FROM orders o
-            LEFT JOIN offers ON o.id = offers.order_id
-            GROUP BY o.id
-            ORDER BY o.id DESC LIMIT 10
-        """)
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-
-        if not rows:
-            await update.message.reply_text("لا توجد طلبات حالياً.")
-            return
-
-        for row in rows:
-            order_id, text, status, gov, area, offer_count = row
-            await update.message.reply_text(
-                f"🆔 الطلب رقم {order_id}\n📍 {gov} - {area}\n💬 {text}\n📦 الحالة: {status}\n📨 عدد العروض: {offer_count}"
-            )
-
-    except Exception as e:
-        logging.error(f"❌ خطأ أثناء جلب الطلبات: {e}")
-        await update.message.reply_text("❌ حدث خطأ أثناء جلب الطلبات.")
+        logging.error(f"❌ خطأ في اتخاذ القرار: {e}")
+        await context.bot.send_message(chat_id=ADMIN_ID, text="❌ حصل خطأ أثناء تنفيذ القرار.")
 
 if __name__ == "__main__":
-    app = ApplicationBuilder().token(BOT_TOKEN_ADMIN).build()
+    app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("pending_agents", pending_agents))
-    app.add_handler(CommandHandler("orders", orders))
-    app.add_handler(CallbackQueryHandler(handle_action))
+    app.add_handler(CommandHandler("pending", list_pending_agents))
+    app.add_handler(CallbackQueryHandler(handle_decision))
     app.run_polling()
