@@ -38,39 +38,42 @@ async def show_pending(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption = f"👤 {full_name}\n🏙️ {gov} - {area}\nID: {uid}"
         await context.bot.send_photo(chat_id=ADMIN_ID, photo=photo_url, caption=caption, reply_markup=kb)
 
-# اختبار الضغط على زر القبول / الرفض
+# معالجة زر القبول أو الرفض
 async def handle_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
-    # تسجيل البيانات للتأكيد
-    print("📥 زرار اتداس:", query.data)
-    await context.bot.send_message(chat_id=ADMIN_ID, text=f"📥 ضغطت على: {query.data}")
 
     data = query.data
     uid = int(data.split("_")[1])
     is_approve = data.startswith("approve_")
 
-    conn = get_conn()
-    cur = conn.cursor()
+    print("📥 زرار اتداس:", data)
+    await context.bot.send_message(chat_id=ADMIN_ID, text=f"📥 ضغطت على: {data}")
 
-    if is_approve:
-        cur.execute("UPDATE agents SET is_verified=TRUE WHERE user_id=%s", (uid,))
-        await context.bot.send_message(chat_id=uid, text="✅ تم قبولك كمندوب.")
-        await context.bot.send_message(chat_id=ADMIN_ID, text=f"✅ تم **قبول** المندوب {uid}.")
-    else:
-        cur.execute("DELETE FROM agents WHERE user_id=%s", (uid,))
-        await context.bot.send_message(chat_id=uid, text="❌ تم رفضك.")
-        await context.bot.send_message(chat_id=ADMIN_ID, text=f"❌ تم **رفض** المندوب {uid}.")
-
-    # محاولة حذف الأزرار
     try:
-        await query.edit_message_reply_markup(reply_markup=None)
-    except Exception as e:
-        logging.warning(f"Edit markup failed: {e}")
+        conn = get_conn()
+        cur = conn.cursor()
 
-    conn.commit()
-    conn.close()
+        if is_approve:
+            cur.execute("UPDATE agents SET is_verified=TRUE WHERE user_id=%s", (uid,))
+            await context.bot.send_message(chat_id=uid, text="✅ تم قبولك كمندوب.")
+            await context.bot.send_message(chat_id=ADMIN_ID, text=f"✅ تم **قبول** المندوب {uid}.")
+        else:
+            cur.execute("DELETE FROM agents WHERE user_id=%s", (uid,))
+            await context.bot.send_message(chat_id=uid, text="❌ تم رفضك.")
+            await context.bot.send_message(chat_id=ADMIN_ID, text=f"❌ تم **رفض** المندوب {uid}.")
+
+        conn.commit()
+        conn.close()
+
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception as e:
+            logging.warning(f"❗ فشل في إزالة الزرار: {e}")
+
+    except Exception as e:
+        logging.error(f"❌ حصل خطأ أثناء معالجة الطلب: {e}")
+        await context.bot.send_message(chat_id=ADMIN_ID, text=f"❌ حصل خطأ:\n{e}")
 
 # عرض الطلبات الأخيرة
 async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
