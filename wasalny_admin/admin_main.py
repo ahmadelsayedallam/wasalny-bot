@@ -10,7 +10,7 @@ from telegram.ext import (
 # الإعدادات
 BOT_TOKEN_ADMIN = os.getenv("BOT_TOKEN_ADMIN")
 DATABASE_URL = os.getenv("DATABASE_URL")
-ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID", "123456789"))  # ← حط ID بتاعك هنا أو في .env
+ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID", "1044357384"))  # ← حط ID بتاعك هنا أو في .env
 
 logging.basicConfig(level=logging.INFO)
 
