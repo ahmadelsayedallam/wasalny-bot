@@ -81,7 +81,7 @@ async def handle_user_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn.close()
 
             for (agent_id,) in agents:
-                button = InlineKeyboardMarkup([[InlineKeyboardButton("📝 إرسال عرض", callback_data=f"offer_{order_id}")]])
+                button = InlineKeyboardMarkup([[InlineKeyboardButton("📜 إرسال عرض", callback_data=f"offer_{order_id}")]])
                 await context.bot.send_message(
                     chat_id=agent_id,
                     text=f"طلب جديد من {area}:\n{order_text}",
