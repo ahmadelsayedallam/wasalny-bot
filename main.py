@@ -198,7 +198,7 @@ async def handle_offer_response(update: Update, context: ContextTypes.DEFAULT_TY
     q = update.callback_query; await q.answer()
     d = q.data
     if d.startswith("accept_offer_"):
-        _, oid, aid = d.split("_")
+        _, _, oid, aid = d.split("_")
         oid, aid = int(oid), int(aid)
         try:
             conn = get_conn(); cur = conn.cursor()
