@@ -79,8 +79,41 @@ async def handle_review_action(update: Update, context: ContextTypes.DEFAULT_TYP
         logging.error(f"❌ فشل في مراجعة المندوب: {e}")
         await query.message.reply_text("❌ حصل خطأ أثناء تنفيذ الإجراء.")
 
+# عرض الطلبات الحالية في بوت الإدارة
+async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("❌ ليس لديك صلاحية الوصول لهذا الأمر.")
+        return
+
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, user_id, governorate, area, text, status
+            FROM orders
+            ORDER BY id DESC LIMIT 10
+        """)
+        orders = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        if not orders:
+            await update.message.reply_text("❌ لا توجد طلبات حالياً.")
+            return
+
+        for order in orders:
+            order_id, user_id, governorate, area, text, status = order
+            message = f"📦 طلب #{order_id}\n👤 المستخدم: {user_id}\n🏙️ {governorate} - {area}\n📝 {text}\n📌 الحالة: {status}"
+            await update.message.reply_text(message)
+
+    except Exception as e:
+        logging.error(f"❌ فشل في عرض الطلبات: {e}")
+        await update.message.reply_text("❌ حصل خطأ أثناء جلب الطلبات.")
+
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", show_pending_agents))
+    app.add_handler(CommandHandler("pending_agents", show_pending_agents))
+    app.add_handler(CommandHandler("orders", show_orders))
     app.add_handler(CallbackQueryHandler(handle_review_action))
     app.run_polling()
