@@ -87,7 +87,8 @@ async def handle_user_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     chat_id=agent_id,
                     text=f"طلب جديد من {area}:\n{order_text}",
                     reply_markup=button
-                )
+                    )
+
 
             await update.message.reply_text("✅ تم تسجيل طلبك! سيتم إرسال الطلب للمناديب القريبين.")
         except Exception as e:
