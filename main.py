@@ -13,6 +13,7 @@ from telegram.ext import (
     CallbackQueryHandler, ContextTypes, filters
 )
 
+# إعداد المتغيرات
 TOKEN = os.getenv("TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 cloudinary.config(
@@ -21,12 +22,12 @@ cloudinary.config(
     api_secret=os.getenv("CLOUDINARY_API_SECRET")
 )
 
+# حالة المستخدم
 user_states, user_data = {}, {}
 GOVS = ["الغربية"]
 AREAS = ["أول طنطا", "ثان طنطا", "حي السيالة", "حي الصاغة", "حي سعيد", "شارع البحر", "شارع الحلو", "محطة القطار", "موقف الجلاء"]
 PRICE_OPTS = ["10 جنيه", "15 جنيه", "20 جنيه"]
 TIME_OPTS = ["10 دقايق", "15 دقيقه", "30 دقيقه"]
-RATING_OPTS = [("⭐", 1), ("⭐⭐", 2), ("⭐⭐⭐", 3), ("⭐⭐⭐⭐", 4), ("⭐⭐⭐⭐⭐", 5)]
 
 def get_conn():
     return psycopg2.connect(DATABASE_URL)
@@ -40,12 +41,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_user_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     txt = update.message.text
-    st = user_states.get(uid)
 
     if txt == "🚶‍♂️ مستخدم":
         user_states[uid] = "awaiting_governorate"
         return await update.message.reply_text("اختار محافظتك:", reply_markup=ReplyKeyboardMarkup([[g] for g in GOVS], True))
 
+    st = user_states.get(uid)
     if st == "awaiting_governorate":
         if txt not in GOVS: return await update.message.reply_text("❌ اختر من القائمة.")
         user_data[uid] = {"governorate": txt}
@@ -77,20 +78,17 @@ async def handle_user_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             conn = get_conn()
             cur = conn.cursor()
-            cur.execute("""
-                INSERT INTO orders (user_id, governorate, area, address, phone, text, status) 
-                VALUES (%s,%s,%s,%s,%s,%s,'قيد الانتظار') RETURNING id
-            """, (uid, gov, area, address, phone, text))
+            cur.execute("INSERT INTO orders (user_id, governorate, area, address, phone, text, status) VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+                        (uid, gov, area, address, phone, text, "قيد الانتظار"))
             oid = cur.fetchone()[0]
             conn.commit()
-
             cur.execute("SELECT user_id FROM agents WHERE is_verified=TRUE AND governorate=%s AND area=%s", (gov, area))
             agents = cur.fetchall()
             conn.close()
             for (aid,) in agents:
                 kb = InlineKeyboardMarkup([[InlineKeyboardButton("📝 عرض", callback_data=f"offer_{oid}_{uid}")]])
-                await context.bot.send_message(chat_id=aid, text=f"طلب جديد من {area}:\n{text}", reply_markup=kb)
-            await update.message.reply_text("✅ تم إرسال الطلب، استنى العروض.")
+                await context.bot.send_message(chat_id=aid, text=f"طلب جديد من {area}:", reply_markup=kb)
+            await update.message.reply_text("✅ تم إرسال الطلب وسيتم التواصل معك قريباً.")
         except Exception as e:
             logging.error(e)
             await update.message.reply_text("❌ حصل خطأ أثناء إرسال الطلب.")
@@ -158,36 +156,35 @@ async def handle_offer_button(update: Update, context: ContextTypes.DEFAULT_TYPE
     uid = q.from_user.id
 
     if d.startswith("offer_"):
-        _, oid, user_id = d.split("_")
-        user_data[uid] = {"order_id": oid, "user_id": user_id}
+        parts = d.split("_")
+        if len(parts) != 3:
+            await q.message.reply_text("❌ خطأ في بيانات العرض.")
+            return
+        oid = int(parts[1])
+        user_data[uid] = {"order_id": oid}
         user_states[uid] = "awaiting_offer_price"
         kb = [[InlineKeyboardButton(p, callback_data=f"price_{p}")] for p in PRICE_OPTS]
         return await q.message.reply_text("اختار السعر:", reply_markup=InlineKeyboardMarkup(kb))
 
     if d.startswith("price_"):
-        pr = d.split("_")[1]
+        pr = d.split("_", 1)[1]
         user_data[uid]["price"] = pr
         user_states[uid] = "awaiting_offer_time"
         kb = [[InlineKeyboardButton(t, callback_data=f"time_{t}")] for t in TIME_OPTS]
         return await q.message.reply_text("اختار الزمن:", reply_markup=InlineKeyboardMarkup(kb))
 
     if d.startswith("time_"):
-        tm = d.split("_")[1]
+        tm = d.split("_", 1)[1]
         info = user_data.get(uid, {})
         oid = info.get("order_id")
-        usr = info.get("user_id")
         pr = info.get("price")
         try:
             conn = get_conn()
             cur = conn.cursor()
             cur.execute("INSERT INTO offers (order_id, agent_id, price, estimated_time) VALUES (%s,%s,%s,%s)",
                         (oid, uid, pr, tm))
-            conn.commit(); conn.close()
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ قبول", callback_data=f"accept_{oid}_{uid}")],
-                [InlineKeyboardButton("❌ رفض", callback_data=f"reject_{oid}_{uid}")]
-            ])
-            await context.bot.send_message(chat_id=int(usr), text=f"📬 عرض جديد على طلبك:\n💸 السعر: {pr}\n🕒 الزمن: {tm}", reply_markup=kb)
+            conn.commit()
+            conn.close()
             await q.message.reply_text("✅ تم إرسال العرض.")
         except Exception as e:
             logging.error(e)
@@ -195,57 +192,123 @@ async def handle_offer_button(update: Update, context: ContextTypes.DEFAULT_TYPE
         user_states[uid] = None
         user_data[uid] = {}
 
-async def handle_offer_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# عرض العروض للمستخدم لاختيار مندوب
+async def handle_user_offer_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-    d = q.data
+    data = q.data
     uid = q.from_user.id
 
-    if d.startswith("accept_"):
-        _, oid, aid = d.split("_")
-        try:
-            conn = get_conn()
-            cur = conn.cursor()
-            cur.execute("UPDATE orders SET status='قيد التنفيذ', selected_agent_id=%s WHERE id=%s", (aid, oid))
-            cur.execute("SELECT address, phone FROM orders WHERE id=%s", (oid,))
-            address, phone = cur.fetchone()
-            conn.commit(); conn.close()
+    if not data.startswith("select_offer_"):
+        return
 
-            await context.bot.send_message(chat_id=int(aid), text=f"🎉 تم اختيارك لتنفيذ الطلب رقم {oid}.\n📍 العنوان: {address}\n📞 التليفون: {phone}")
+    parts = data.split("_")
+    if len(parts) != 3:
+        await q.message.reply_text("❌ خطأ في اختيار العرض.")
+        return
 
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🚚 تم التوصيل", callback_data=f"delivered_{oid}_{aid}")]])
-            await q.message.reply_text("✅ تم اختيار العرض بنجاح.", reply_markup=kb)
-        except Exception as e:
-            logging.error(e)
-            await q.message.reply_text("❌ حصل خطأ أثناء قبول العرض.")
+    oid = int(parts[2])
+    selected_agent_id = int(parts[1])
 
-    elif d.startswith("reject_"):
-        await q.message.reply_text("❌ تم رفض العرض.")
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        # تحديث حالة الطلب وتحديد المندوب المختار
+        cur.execute("UPDATE orders SET status='قيد التنفيذ', selected_agent_id=%s WHERE id=%s", (selected_agent_id, oid))
+        conn.commit()
 
-    elif d.startswith("delivered_"):
-        _, oid, aid = d.split("_")
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton(txt, callback_data=f"rate_{oid}_{aid}_{val}")] for txt, val in RATING_OPTS])
-        await q.message.reply_text("🙏 قيّم تجربتك مع المندوب:", reply_markup=kb)
+        # حذف العروض الأخرى الخاصة بالطلب
+        cur.execute("DELETE FROM offers WHERE order_id=%s AND agent_id != %s", (oid, selected_agent_id))
+        conn.commit()
 
-    elif d.startswith("rate_"):
-        _, oid, aid, rate = d.split("_")
-        try:
-            conn = get_conn()
-            cur = conn.cursor()
-            cur.execute("UPDATE orders SET status='تم التوصيل' WHERE id=%s", (oid,))
-            cur.execute("INSERT INTO ratings (order_id, agent_id, rating) VALUES (%s,%s,%s)", (oid, aid, rate))
-            conn.commit(); conn.close()
-            await q.message.reply_text("✅ شكراً على تقييمك!")
-            await context.bot.send_message(chat_id=int(aid), text="🌟 تم تقييمك على الطلب الأخير.")
-        except Exception as e:
-            logging.error(e)
-            await q.message.reply_text("❌ حصل خطأ أثناء حفظ التقييم.")
+        # جلب بيانات المندوب المختار
+        cur.execute("SELECT user_id FROM agents WHERE user_id=%s", (selected_agent_id,))
+        row = cur.fetchone()
+
+        conn.close()
+
+        # إرسال إشعار للمندوب المختار
+        if row:
+            await context.bot.send_message(chat_id=selected_agent_id, text=f"🎉 تم اختيارك لتنفيذ الطلب رقم {oid}.")
+
+        # إعلام المستخدم
+        await q.message.reply_text(f"✅ تم اختيار المندوب رقم {selected_agent_id} لتنفيذ طلبك.")
+
+    except Exception as e:
+        logging.error(e)
+        await q.message.reply_text("❌ حدث خطأ أثناء اختيار المندوب.")
+
+# إضافة إلغاء الطلب للمستخدم (جزء من الطلبات الممكن إلغاؤها)
+async def handle_user_cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, text, status FROM orders 
+            WHERE user_id=%s AND status IN ('قيد الانتظار', 'لم يتم اختيار مندوب')
+            ORDER BY id DESC
+        """, (uid,))
+        orders = cur.fetchall()
+        conn.close()
+    except Exception as e:
+        logging.error(e)
+        await update.message.reply_text("❌ حدث خطأ أثناء جلب الطلبات.")
+        return
+
+    if not orders:
+        await update.message.reply_text("❌ لا توجد طلبات يمكنك إلغاؤها.")
+        return
+
+    keyboard = []
+    for oid, txt, status in orders:
+        keyboard.append([InlineKeyboardButton(f"طلب #{oid} - {status}", callback_data=f"cancel_order_{oid}")])
+
+    await update.message.reply_text("اختر الطلب الذي تريد إلغاؤه:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def handle_cancel_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    uid = query.from_user.id
+    data = query.data
+
+    if not data.startswith("cancel_order_"):
+        return
+
+    oid = int(data.split("_")[-1])
+
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT status FROM orders WHERE id=%s AND user_id=%s AND status IN ('قيد الانتظار', 'لم يتم اختيار مندوب')
+        """, (oid, uid))
+        row = cur.fetchone()
+        if not row:
+            await query.message.reply_text("❌ هذا الطلب لا يمكن إلغاؤه أو غير موجود.")
+            conn.close()
+            return
+
+        cur.execute("UPDATE orders SET status='ملغى' WHERE id=%s", (oid,))
+        conn.commit()
+        conn.close()
+
+        await query.message.reply_text(f"✅ تم إلغاء الطلب رقم {oid} بنجاح.")
+
+    except Exception as e:
+        logging.error(e)
+        await query.message.reply_text("❌ حدث خطأ أثناء إلغاء الطلب.")
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_role))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    app.add_handler(CallbackQueryHandler(handle_offer_button, pattern="^(offer_|price_|time_)"))
-    app.add_handler(CallbackQueryHandler(handle_offer_response, pattern="^(accept_|reject_|delivered_|rate_)"))
+    app.add_handler(CallbackQueryHandler(handle_offer_button, pattern=r"^(offer_|price_|time_)"))
+    app.add_handler(CallbackQueryHandler(handle_user_offer_selection, pattern=r"^select_offer_"))
+    app.add_handler(CommandHandler("cancel_my_order", handle_user_cancel_order))
+    app.add_handler(CallbackQueryHandler(handle_cancel_order_callback, pattern=r"^cancel_order_"))
+
     app.run_polling()
