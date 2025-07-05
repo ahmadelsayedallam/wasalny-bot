@@ -116,12 +116,20 @@ async def handle_user_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_states.get(user_id) == "awaiting_id_photo":
-        photo_file_id = update.message.photo[-1].file_id
-        full_name = user_data[user_id].get("full_name")
-        governorate = user_data[user_id].get("governorate")
-        area = user_data[user_id].get("area")
-
         try:
+            photo_sizes = update.message.photo
+            if not photo_sizes:
+                await update.message.reply_text("❌ لم يتم العثور على صورة.")
+                return
+
+            # أكبر صورة (آخر عنصر في القائمة)
+            photo_file_id = photo_sizes[-1].file_id
+            logging.info(f"📸 تم استقبال صورة من {user_id}, file_id: {photo_file_id}")
+
+            full_name = user_data[user_id].get("full_name")
+            governorate = user_data[user_id].get("governorate")
+            area = user_data[user_id].get("area")
+
             conn = get_conn()
             cur = conn.cursor()
             cur.execute("""
@@ -131,12 +139,15 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn.commit()
             cur.close()
             conn.close()
+
             await update.message.reply_text("✅ تم استلام البطاقة. سيتم مراجعتها من الإدارة قبل تفعيل حسابك.")
         except Exception as e:
             logging.error(f"❌ فشل في تسجيل المندوب: {e}")
             await update.message.reply_text("❌ حصل خطأ أثناء حفظ بياناتك.")
-        user_states[user_id] = None
-        user_data[user_id] = {}
+        finally:
+            user_states[user_id] = None
+            user_data[user_id] = {}
+
 
 # ====== Main ======
 if __name__ == "__main__":
