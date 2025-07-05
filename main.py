@@ -1,6 +1,7 @@
 import os
 import logging
 import psycopg2
+import httpx
 import cloudinary
 import cloudinary.uploader
 from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
@@ -8,10 +9,11 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, CallbackQueryHandler, filters
 )
 
-# بيئة العمل
+# إعداد المتغيرات
 TOKEN = os.getenv("TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+# إعداد cloudinary
 cloudinary.config(
     cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
     api_key=os.getenv("CLOUDINARY_API_KEY"),
@@ -22,12 +24,12 @@ logging.basicConfig(level=logging.INFO)
 user_states = {}
 user_data = {}
 
+# المحافظات والأحياء المدعومة
 GOVERNORATES = ["الغربية"]
 AREAS = [
     "أول طنطا", "ثان طنطا", "حي السيالة", "حي الصاغة", "حي سعيد",
     "شارع البحر", "شارع الحلو", "محطة القطار", "موقف الجلاء"
 ]
-
 PRICE_OPTIONS = ["10 جنيه", "15 جنيه", "20 جنيه"]
 TIME_OPTIONS = ["10 دقايق", "15 دقيقه", "30 دقيقه"]
 
@@ -36,25 +38,6 @@ def get_conn():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-
-    # تحقق من حالة المندوب
-    try:
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute("SELECT is_verified FROM agents WHERE user_id = %s", (user_id,))
-        row = cur.fetchone()
-        cur.close()
-        conn.close()
-
-        if row:
-            if row[0]:
-                await update.message.reply_text("✅ تم تفعيل حسابك كمندوب.")
-            else:
-                await update.message.reply_text("⏳ طلبك قيد المراجعة.")
-            return
-    except Exception as e:
-        logging.error(f"❌ فشل التحقق من حالة المندوب: {e}")
-
     keyboard = [[KeyboardButton("🚶‍♂️ مستخدم"), KeyboardButton("🚚 مندوب")]]
     await update.message.reply_text("أهلاً بيك! اختار دورك:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
     user_states[user_id] = None
@@ -125,6 +108,23 @@ async def handle_user_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if text == "🚚 مندوب":
+        try:
+            conn = get_conn()
+            cur = conn.cursor()
+            cur.execute("SELECT is_verified FROM agents WHERE user_id = %s", (user_id,))
+            row = cur.fetchone()
+            cur.close()
+            conn.close()
+
+            if row:
+                if row[0]:
+                    await update.message.reply_text("✅ تم تفعيل حسابك كمندوب.")
+                else:
+                    await update.message.reply_text("⏳ طلبك قيد المراجعة. سيتم إعلامك بعد المراجعة.")
+                return
+        except Exception as e:
+            logging.error(f"❌ فشل التحقق من حالة المندوب: {e}")
+
         user_states[user_id] = "awaiting_agent_name"
         await update.message.reply_text("اكتب اسمك الكامل:")
         return
@@ -158,23 +158,22 @@ async def handle_user_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_states.get(user_id) == "awaiting_id_photo":
-        file = await context.bot.get_file(update.message.photo[-1].file_id)
-        photo_path = f"{user_id}_id_photo.jpg"
-        await file.download_to_drive(photo_path)
+        file_id = update.message.photo[-1].file_id
+        full_name = user_data[user_id].get("full_name")
+        governorate = user_data[user_id].get("governorate")
+        area = user_data[user_id].get("area")
 
         try:
-            result = cloudinary.uploader.upload(photo_path)
-            photo_url = result["secure_url"]
-        except Exception as e:
-            logging.error(f"❌ فشل رفع الصورة إلى Cloudinary: {e}")
-            await update.message.reply_text("❌ فشل رفع الصورة.")
-            return
+            # رفع الصورة على Cloudinary
+            file = await context.bot.get_file(file_id)
+            file_path = file.file_path
+            telegram_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
 
-        full_name = user_data[user_id]["full_name"]
-        governorate = user_data[user_id]["governorate"]
-        area = user_data[user_id]["area"]
+            async with httpx.AsyncClient() as client:
+                response = await client.get(telegram_url)
+                result = cloudinary.uploader.upload(response.content)
+                photo_url = result["secure_url"]
 
-        try:
             conn = get_conn()
             cur = conn.cursor()
             cur.execute("""
@@ -184,11 +183,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn.commit()
             cur.close()
             conn.close()
-            await update.message.reply_text("✅ تم استلام البطاقة. سيتم مراجعتها من الإدارة.")
+            await update.message.reply_text("✅ تم استلام البطاقة. سيتم مراجعتها من الإدارة قبل تفعيل حسابك.")
         except Exception as e:
-            logging.error(f"❌ فشل حفظ بيانات المندوب: {e}")
-            await update.message.reply_text("❌ حصل خطأ أثناء حفظ البيانات.")
-
+            logging.error(f"❌ فشل رفع الصورة أو حفظ البيانات: {e}")
+            await update.message.reply_text("❌ حصل خطأ أثناء رفع الصورة أو حفظ البيانات.")
         user_states[user_id] = None
         user_data[user_id] = {}
 
@@ -211,7 +209,7 @@ async def handle_offer_button(update: Update, context: ContextTypes.DEFAULT_TYPE
         user_data[user_id]["price"] = price
         user_states[user_id] = "awaiting_offer_time"
         keyboard = [[InlineKeyboardButton(time, callback_data=f"time_{time}")] for time in TIME_OPTIONS]
-        await update.callback_query.message.reply_text("اختار الوقت المتوقع للتوصيل:", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.message.reply_text("اختار الوقت المتوقع للتوصيل:", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("time_"):
         time = data.split("_")[1]
