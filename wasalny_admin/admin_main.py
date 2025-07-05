@@ -1,119 +1,75 @@
 import logging
 import os
 import psycopg2
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
+# 🛡️ التوكن والداتابيز
 TOKEN = os.getenv("BOT_TOKEN_ADMIN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 logging.basicConfig(level=logging.INFO)
 
-client_waiting_choice = {}
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("أهلاً بك في لوحة إدارة وصّلني.\nاستخدم الأمر /orders لعرض آخر الطلبات.")
-
-async def list_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
-        cursor.execute("SELECT id, user_id, governorate, text, status FROM orders ORDER BY id DESC LIMIT 10")
+
+        # هات آخر 10 طلبات
+        cursor.execute("""
+            SELECT id, user_id, governorate, text, status
+            FROM orders
+            ORDER BY id DESC
+            LIMIT 10
+        """)
         orders = cursor.fetchall()
-        cursor.close()
-        conn.close()
 
         if not orders:
-            await update.message.reply_text("لا توجد طلبات حالياً.")
+            await update.message.reply_text("📭 لا يوجد طلبات حالياً.")
             return
 
+        full_message = "📋 آخر الطلبات:\n\n"
         for order in orders:
             order_id, user_id, governorate, text, status = order
-            msg = (f"🆔 طلب رقم: {order_id}\n"
-                   f"👤 المستخدم: {user_id}\n"
-                   f"🏙 المحافظة: {governorate}\n"
-                   f"📦 الطلب: {text}\n"
-                   f"📌 الحالة: {status}")
 
-            keyboard = []
-            if status == "قيد الانتظار":
-                keyboard = [
-                    [InlineKeyboardButton("عرض العروض", callback_data=f"show_offers_{order_id}")]
-                ]
+            # هات العروض المرتبطة بالطلب
+            cursor.execute("""
+                SELECT agent_id, price, eta, status
+                FROM offers
+                WHERE order_id = %s
+            """, (order_id,))
+            offers = cursor.fetchall()
 
-            await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard))
+            order_msg = f"""📦 طلب رقم #{order_id}
+🧍 المستخدم: {user_id}
+📍 المحافظة: {governorate}
+📃 الطلب: {text}
+📌 الحالة: {status}
+"""
 
-    except Exception as e:
-        logging.error(f"❌ خطأ في جلب الطلبات: {e}")
-        await update.message.reply_text("❌ حدث خطأ أثناء جلب الطلبات.")
+            if offers:
+                order_msg += "💬 العروض:\n"
+                for offer in offers:
+                    agent_id, price, eta, offer_status = offer
+                    symbol = "✅" if offer_status == "تم الاختيار" else "❌" if offer_status == "مرفوض" else "⏳"
+                    order_msg += f"- 🛵 مندوب {agent_id}: {price} جنيه / {eta} دقيقة {symbol} ({offer_status})\n"
+            else:
+                order_msg += "🚫 لا توجد عروض حتى الآن.\n"
 
-async def show_offers(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+            order_msg += "\n" + ("-"*30) + "\n"
+            full_message += order_msg
 
-    order_id = int(query.data.split("_")[-1])
+        await update.message.reply_text(full_message[:4000])  # عشان مايتخطاش حد تليجرام
 
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, agent_id, price, eta, status FROM offers WHERE order_id = %s", (order_id,))
-        offers = cursor.fetchall()
-        cursor.close()
         conn.close()
-
-        if not offers:
-            await query.message.reply_text("لا توجد عروض لهذا الطلب.")
-            return
-
-        buttons = []
-        msg = f"عروض الطلب رقم {order_id}:\n\n"
-        for offer in offers:
-            offer_id, agent_id, price, eta, status = offer
-            msg += f"🆔 عرض رقم: {offer_id}\nمندوب: {agent_id}\nالسعر: {price} جنيه\nالوقت: {eta}\nالحالة: {status}\n\n"
-            if status == "قيد الانتظار":
-                buttons.append([InlineKeyboardButton(f"اختيار عرض {offer_id}", callback_data=f"choose_offer_{offer_id}_{order_id}")])
-
-        await query.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(buttons))
-
     except Exception as e:
-        logging.error(f"❌ خطأ في جلب العروض: {e}")
-        await query.message.reply_text("❌ حدث خطأ أثناء جلب العروض.")
-
-async def choose_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    data = query.data.split("_")
-    offer_id = int(data[2])
-    order_id = int(data[3])
-
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        cursor.execute("UPDATE offers SET status = 'تم الاختيار' WHERE id = %s", (offer_id,))
-        cursor.execute("UPDATE orders SET status = 'قيد التنفيذ' WHERE id = %s", (order_id,))
-        cursor.execute("UPDATE offers SET status = 'مرفوض' WHERE order_id = %s AND id != %s", (order_id, offer_id))
-        conn.commit()
-        cursor.close()
-        conn.close()
-
-        await query.message.reply_text(f"✅ تم اختيار العرض رقم {offer_id} وتم تحديث حالة الطلب إلى قيد التنفيذ.")
-
-    except Exception as e:
-        logging.error(f"❌ خطأ في اختيار العرض: {e}")
-        await query.message.reply_text("❌ حدث خطأ أثناء اختيار العرض.")
-
-async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("الأمر غير معروف. استخدم /orders لعرض الطلبات.")
+        logging.error(f"❌ فشل في عرض الطلبات: {e}")
+        await update.message.reply_text("❌ حصل خطأ أثناء تحميل الطلبات.")
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("orders", list_orders))
-    app.add_handler(CallbackQueryHandler(show_offers, pattern=r"^show_offers_\d+$"))
-    app.add_handler(CallbackQueryHandler(choose_offer, pattern=r"^choose_offer_\d+_\d+$"))
-    app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
-    logging.info("🛠️ بوت الإدارة شغال...")
+    logging.info("🚀 بوت الإدارة شغال...")
     app.run_polling()
 
 if __name__ == "__main__":
