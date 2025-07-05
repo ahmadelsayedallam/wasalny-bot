@@ -11,7 +11,7 @@ TOKEN = os.getenv("BOT_TOKEN_ADMIN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "1044357384"))
 
-# لوج
+# إعداد اللوج
 logging.basicConfig(level=logging.INFO)
 
 # الاتصال بقاعدة البيانات
@@ -34,10 +34,10 @@ async def show_pending(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for uid, name, gov, area, photo_url in agents:
         caption = f"👤 {name}\n🏙️ {gov} - {area}\n🆔 ID: {uid}"
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ قبول", callback_data=f"approve_{uid}"),
-             InlineKeyboardButton("❌ رفض", callback_data=f"reject_{uid}")]
-        ])
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ قبول", callback_data=f"approve_{uid}"),
+            InlineKeyboardButton("❌ رفض", callback_data=f"reject_{uid}")
+        ]])
         await context.bot.send_photo(chat_id=ADMIN_ID, photo=photo_url, caption=caption, reply_markup=keyboard)
 
 # التعامل مع زر القبول أو الرفض
@@ -49,28 +49,26 @@ async def handle_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = int(data.split("_")[1])
     is_approve = data.startswith("approve_")
 
-    print("📥 زرار اتداس:", data)
-    await context.bot.send_message(chat_id=ADMIN_ID, text=f"📥 ضغطت على: {data}")
-
     try:
         conn = get_conn()
         cur = conn.cursor()
 
         if is_approve:
             cur.execute("UPDATE agents SET is_verified=TRUE WHERE user_id=%s", (uid,))
-            await context.bot.send_message(chat_id=ADMIN_ID, text=f"✅ تم **قبول** المندوب {uid}.")
+            new_caption = f"✅ تم قبول المندوب.\n🆔 ID: {uid}"
         else:
             cur.execute("DELETE FROM agents WHERE user_id=%s", (uid,))
-            await context.bot.send_message(chat_id=ADMIN_ID, text=f"❌ تم **رفض** المندوب {uid}.")
+            new_caption = f"❌ تم رفض المندوب.\n🆔 ID: {uid}"
 
         conn.commit()
         conn.close()
 
-        # إزالة الزرار من الرسالة
+        # تحديث الرسالة نفسها
         try:
-            await query.edit_message_reply_markup(reply_markup=None)
+            await query.edit_message_caption(caption=new_caption)
         except Exception as e:
-            logging.warning(f"⚠️ لم أستطع إزالة الزرار: {e}")
+            logging.warning(f"⚠️ لم أستطع تعديل التسمية التوضيحية: {e}")
+            await query.edit_message_reply_markup(reply_markup=None)
 
     except Exception as e:
         logging.error(f"❌ حصل خطأ أثناء معالجة الطلب: {e}")
@@ -91,7 +89,9 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("✅ لا توجد طلبات حالياً.")
 
     for oid, uid, gov, area, txt, status in orders:
-        await update.message.reply_text(f"📦 طلب #{oid}\n👤 المستخدم: {uid}\n🏙️ {gov} - {area}\n📝 {txt}\n📌 الحالة: {status}")
+        await update.message.reply_text(
+            f"📦 طلب #{oid}\n👤 المستخدم: {uid}\n🏙️ {gov} - {area}\n📝 {txt}\n📌 الحالة: {status}"
+        )
 
 # تشغيل البوت
 if __name__ == "__main__":
