@@ -6,19 +6,16 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 )
 
-# إعداد المتغيرات
 TOKEN = os.getenv("BOT_TOKEN_ADMIN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "1044357384"))
 
-# اللوج
 logging.basicConfig(level=logging.INFO)
 
-# الاتصال بقاعدة البيانات
 def get_conn():
     return psycopg2.connect(DATABASE_URL)
 
-# عرض المناديب قيد المراجعة
+# عرض المناديب تحت المراجعة
 async def show_pending(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return await update.message.reply_text("❌ ليس لديك صلاحية.")
@@ -34,13 +31,16 @@ async def show_pending(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for uid, name, gov, area, photo_url in agents:
         caption = f"👤 {name}\n🏙️ {gov} - {area}\n🆔 ID: {uid}"
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ قبول", callback_data=f"approve_{uid}"),
-             InlineKeyboardButton("❌ رفض", callback_data=f"reject_{uid}")]
-        ])
-        await context.bot.send_photo(chat_id=ADMIN_ID, photo=photo_url, caption=caption, reply_markup=keyboard)
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ قبول", callback_data=f"approve_{uid}"),
+            InlineKeyboardButton("❌ رفض", callback_data=f"reject_{uid}")
+        ]])
+        try:
+            await context.bot.send_photo(chat_id=ADMIN_ID, photo=photo_url, caption=caption, reply_markup=keyboard)
+        except Exception as e:
+            logging.warning(f"⚠️ فشل في إرسال الصورة: {e}")
 
-# التعامل مع زر القبول أو الرفض
+# التعامل مع القبول أو الرفض
 async def handle_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -55,27 +55,25 @@ async def handle_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if is_approve:
             cur.execute("UPDATE agents SET is_verified=TRUE WHERE user_id=%s", (uid,))
-            await context.bot.send_message(chat_id=uid, text="✅ تم قبولك كمندوب.")
             await context.bot.send_message(chat_id=ADMIN_ID, text=f"✅ تم **قبول** المندوب {uid}.")
         else:
             cur.execute("DELETE FROM agents WHERE user_id=%s", (uid,))
-            await context.bot.send_message(chat_id=uid, text="❌ تم رفض طلبك كمندوب.")
             await context.bot.send_message(chat_id=ADMIN_ID, text=f"❌ تم **رفض** المندوب {uid}.")
 
         conn.commit()
         conn.close()
 
-        # إزالة الأزرار من الرسالة
+        # إزالة الزر من الرسالة
         try:
             await query.edit_message_reply_markup(reply_markup=None)
         except Exception as e:
-            logging.warning(f"⚠️ لم أستطع إزالة الزرار: {e}")
+            logging.warning(f"⚠️ لم أستطع إزالة الزر: {e}")
 
     except Exception as e:
-        logging.error(f"❌ حصل خطأ أثناء معالجة الطلب: {e}")
+        logging.error(f"❌ حصل خطأ أثناء المعالجة: {e}")
         await context.bot.send_message(chat_id=ADMIN_ID, text=f"❌ حصل خطأ:\n{e}")
 
-# عرض الطلبات
+# عرض الطلبات الأخيرة
 async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return await update.message.reply_text("❌ ليس لديك صلاحية.")
