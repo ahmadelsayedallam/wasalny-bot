@@ -1,134 +1,200 @@
 import os
 import logging
 import psycopg2
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update, InlineKeyboardButton, InlineKeyboardMarkup
+)
 from telegram.ext import (
-    ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+    ApplicationBuilder, CommandHandler, CallbackQueryHandler,
+    ContextTypes, filters, MessageHandler
 )
 
-# ثابت الإدمن (غيره لو عاوز)
+# ثابت معرف الادمن
 ADMIN_ID = 1044357384
 
-# متغيرات الاتصال بقاعدة البيانات
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 
 def get_conn():
     return psycopg2.connect(DATABASE_URL)
 
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    text = (
+        "مرحباً بك في لوحة تحكم الإدارة.\n\n"
+        "الأوامر المتاحة:\n"
+        "/pending_agents - عرض المناديب في انتظار المراجعة\n"
+        "/pending_orders - عرض الطلبات المفتوحة\n"
+        "/help - عرض هذه الرسالة\n"
+    )
+    await update.message.reply_text(text)
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        return await update.message.reply_text("❌ ليس لديك صلاحية لاستخدام هذا الأمر.")
-    help_text = (
-        "🔹 أوامر الإدارة:\n"
-        "/pending_agents - عرض المندوبين في انتظار المراجعة\n"
-        "/orders - عرض أحدث 10 طلبات\n"
-        "/delete_order <رقم الطلب> - حذف طلب معين\n"
-        "/help - عرض هذا النص"
+        return
+    text = (
+        "الأوامر المتاحة:\n"
+        "/pending_agents - عرض المناديب في انتظار المراجعة\n"
+        "/pending_orders - عرض الطلبات المفتوحة\n"
+        "/help - عرض هذه الرسالة\n"
+        "/cancel_order_رقم_الطلب - إلغاء طلب معين\n"
     )
-    await update.message.reply_text(help_text)
+    await update.message.reply_text(text)
 
-async def show_pending(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# عرض المناديب في انتظار المراجعة (الذين رفعوا صورة البطاقة)
+async def pending_agents(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        return await update.message.reply_text("❌ ليس لديك صلاحية.")
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT user_id, full_name, governorate, area, id_photo_url FROM agents WHERE is_verified=FALSE")
-    agents = cur.fetchall()
-    conn.close()
-
-    if not agents:
-        return await update.message.reply_text("✅ لا يوجد مناديب في الانتظار.")
-
-    for uid, name, gov, area, photo_url in agents:
-        caption = f"👤 {name}\n🏙️ {gov} - {area}\n🆔 ID: {uid}"
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("✅ قبول", callback_data=f"approve_{uid}"),
-            InlineKeyboardButton("❌ رفض", callback_data=f"reject_{uid}")
-        ]])
-        await context.bot.send_photo(chat_id=ADMIN_ID, photo=photo_url, caption=caption, reply_markup=keyboard)
-
-async def handle_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    data = query.data
-    uid = int(data.split("_")[1])
-    is_approve = data.startswith("approve_")
-
-    logging.info(f"📥 ضغط زر: {data}")
-    await context.bot.send_message(chat_id=ADMIN_ID, text=f"📥 ضغطت على: {data}")
-
+        return
     try:
         conn = get_conn()
         cur = conn.cursor()
-
-        if is_approve:
-            cur.execute("UPDATE agents SET is_verified=TRUE WHERE user_id=%s", (uid,))
-            await context.bot.send_message(chat_id=ADMIN_ID, text=f"✅ تم قبول المندوب {uid}.")
-        else:
-            cur.execute("DELETE FROM agents WHERE user_id=%s", (uid,))
-            await context.bot.send_message(chat_id=ADMIN_ID, text=f"❌ تم رفض المندوب {uid} وحذفه.")
-
-        conn.commit()
+        cur.execute("SELECT id, full_name, governorate, area, id_photo_url FROM agents WHERE is_verified=FALSE")
+        agents = cur.fetchall()
         conn.close()
 
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except Exception as e:
-            logging.warning(f"⚠️ لم أستطع إزالة أزرار الطلب: {e}")
+        if not agents:
+            await update.message.reply_text("لا يوجد مناديب في انتظار المراجعة.")
+            return
+
+        for agent in agents:
+            aid, name, gov, area, photo_url = agent
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ قبول", callback_data=f"verify_agent_{aid}"),
+                 InlineKeyboardButton("❌ رفض", callback_data=f"reject_agent_{aid}")]
+            ])
+            text = (
+                f"اسم: {name}\n"
+                f"محافظة: {gov}\n"
+                f"حي: {area}\n"
+                f"صورة البطاقة:"
+            )
+            await context.bot.send_photo(chat_id=ADMIN_ID, photo=photo_url, caption=text, reply_markup=kb)
 
     except Exception as e:
-        logging.error(f"❌ خطأ أثناء معالجة الطلب: {e}")
-        await context.bot.send_message(chat_id=ADMIN_ID, text=f"❌ حدث خطأ:\n{e}")
+        logging.error(e)
+        await update.message.reply_text("حدث خطأ أثناء جلب بيانات المناديب.")
 
-async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# التعامل مع موافقة أو رفض المندوب
+async def handle_agent_verification(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
     if update.effective_user.id != ADMIN_ID:
-        return await update.message.reply_text("❌ ليس لديك صلاحية.")
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT id, user_id, governorate, area, text, status FROM orders ORDER BY id DESC LIMIT 10")
-    orders = cur.fetchall()
-    conn.close()
+        return
 
-    if not orders:
-        return await update.message.reply_text("✅ لا توجد طلبات حالياً.")
-
-    for oid, uid, gov, area, txt, status in orders:
-        await update.message.reply_text(
-            f"📦 طلب #{oid}\n👤 المستخدم: {uid}\n🏙️ {gov} - {area}\n📝 {txt}\n📌 الحالة: {status}"
-        )
-
-async def delete_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return await update.message.reply_text("❌ ليس لديك صلاحية.")
+    data = query.data
     try:
-        if len(context.args) != 1:
-            return await update.message.reply_text("❗ استخدم: /delete_order <رقم الطلب>")
-        oid = int(context.args[0])
+        if data.startswith("verify_agent_"):
+            aid = int(data.split("_")[-1])
+            conn = get_conn()
+            cur = conn.cursor()
+            cur.execute("UPDATE agents SET is_verified=TRUE WHERE id=%s", (aid,))
+            conn.commit()
+            conn.close()
+            await query.edit_message_caption(caption="✅ تم تفعيل المندوب بنجاح.")
+        elif data.startswith("reject_agent_"):
+            aid = int(data.split("_")[-1])
+            conn = get_conn()
+            cur = conn.cursor()
+            cur.execute("DELETE FROM agents WHERE id=%s", (aid,))
+            conn.commit()
+            conn.close()
+            await query.edit_message_caption(caption="❌ تم رفض وحذف طلب المندوب.")
+    except Exception as e:
+        logging.error(e)
+        await query.message.reply_text("حدث خطأ أثناء معالجة الطلب.")
+
+# عرض الطلبات المفتوحة في انتظار اختيار مندوب
+async def pending_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, user_id, governorate, area, address, phone, text, status 
+            FROM orders WHERE status='قيد الانتظار'
+        """)
+        orders = cur.fetchall()
+        conn.close()
+
+        if not orders:
+            await update.message.reply_text("لا يوجد طلبات مفتوحة حالياً.")
+            return
+
+        for order in orders:
+            oid, user_id, gov, area, address, phone, text, status = order
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ إلغاء الطلب", callback_data=f"cancel_order_{oid}")]
+            ])
+            msg = (
+                f"رقم الطلب: {oid}\n"
+                f"المستخدم: {user_id}\n"
+                f"المحافظة: {gov}\n"
+                f"الحي: {area}\n"
+                f"العنوان: {address}\n"
+                f"رقم الهاتف: {phone}\n"
+                f"التفاصيل: {text}\n"
+                f"الحالة: {status}"
+            )
+            await update.message.reply_text(msg, reply_markup=kb)
+    except Exception as e:
+        logging.error(e)
+        await update.message.reply_text("حدث خطأ أثناء جلب الطلبات.")
+
+# إلغاء طلب من الإدارة
+async def handle_cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    text = update.message.text
+    if not text.startswith("/cancel_order_"):
+        return
+    try:
+        oid = int(text.split("_")[-1])
         conn = get_conn()
         cur = conn.cursor()
         cur.execute("DELETE FROM orders WHERE id=%s", (oid,))
-        deleted = cur.rowcount
         conn.commit()
         conn.close()
-        if deleted:
-            await update.message.reply_text(f"✅ تم حذف الطلب رقم {oid}.")
-        else:
-            await update.message.reply_text(f"❌ لم يتم العثور على طلب برقم {oid}.")
+        await update.message.reply_text(f"✅ تم حذف الطلب رقم {oid}.")
     except Exception as e:
         logging.error(e)
-        await update.message.reply_text("❌ حدث خطأ أثناء حذف الطلب.")
+        await update.message.reply_text("حدث خطأ أثناء حذف الطلب.")
+
+# التعامل مع أزرار إلغاء الطلب من قائمة الطلبات
+async def handle_cancel_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if update.effective_user.id != ADMIN_ID:
+        return
+    data = query.data
+    if data.startswith("cancel_order_"):
+        try:
+            oid = int(data.split("_")[-1])
+            conn = get_conn()
+            cur = conn.cursor()
+            cur.execute("DELETE FROM orders WHERE id=%s", (oid,))
+            conn.commit()
+            conn.close()
+            await query.edit_message_text(f"❌ تم إلغاء وحذف الطلب رقم {oid}.")
+        except Exception as e:
+            logging.error(e)
+            await query.message.reply_text("حدث خطأ أثناء إلغاء الطلب.")
 
 if __name__ == "__main__":
-    print("🚀 تشغيل WasalnyAdminBot...")
-    app = ApplicationBuilder().token(os.getenv("BOT_TOKEN_ADMIN")).build()
+    app = ApplicationBuilder().token(os.getenv("ADMIN_TOKEN")).build()
 
+    app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("pending_agents", show_pending))
-    app.add_handler(CommandHandler("orders", show_orders))
-    app.add_handler(CommandHandler("delete_order", delete_order))
-    app.add_handler(CallbackQueryHandler(handle_review))
+    app.add_handler(CommandHandler("pending_agents", pending_agents))
+    app.add_handler(CommandHandler("pending_orders", pending_orders))
+
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^/cancel_order_\d+$"), handle_cancel_order))
+    app.add_handler(CallbackQueryHandler(handle_agent_verification, pattern=r"^(verify_agent_|reject_agent_)"))
+    app.add_handler(CallbackQueryHandler(handle_cancel_order_callback, pattern=r"^cancel_order_"))
 
     app.run_polling()
