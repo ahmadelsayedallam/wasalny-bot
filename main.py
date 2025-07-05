@@ -1,50 +1,18 @@
 import logging
 import os
-import re
 import psycopg2
-from telegram import Update, KeyboardButton, ReplyKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, CallbackQueryHandler, filters
 
-TOKEN = os.getenv("TOKEN")
+TOKEN = os.getenv("BOT_TOKEN_USER")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 logging.basicConfig(level=logging.INFO)
-
 user_states = {}
-user_data = {}
 agent_current_order = {}
+agent_offer_data = {}  # {agent_id: {"order_id": ..., "price": ...}}
 
-def create_tables():
-    conn = psycopg2.connect(DATABASE_URL)
-    cursor = conn.cursor()
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS orders (
-        id SERIAL PRIMARY KEY,
-        user_id BIGINT,
-        governorate TEXT,
-        text TEXT,
-        status TEXT DEFAULT 'قيد الانتظار'
-    )""")
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS agents (
-        id SERIAL PRIMARY KEY,
-        user_id BIGINT UNIQUE,
-        governorate TEXT
-    )""")
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS offers (
-        id SERIAL PRIMARY KEY,
-        order_id INT REFERENCES orders(id),
-        agent_id BIGINT,
-        price TEXT,
-        eta TEXT,
-        status TEXT DEFAULT 'قيد الانتظار'
-    )""")
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-governorates = ["القاهرة", "الجيزة", "الإسكندرية", "الدقهلية", "الشرقية", "المنوفية"]
+GOVS = ["القاهرة", "الجيزة", "الإسكندرية"]
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[KeyboardButton("🚶‍♂️ مستخدم"), KeyboardButton("🚚 مندوب")]]
@@ -52,119 +20,156 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    text = update.message.text.strip()
+    text = update.message.text
 
-    # رد المندوب على عرض السعر والوقت
-    if user_states.get(user_id) == "awaiting_offer":
-        pattern = r"(\d+(\.\d+)?)\s*(جنيه|EGP)?\s+(\d+)\s*(دقيقة|دقايق|دقائق)"
-        match = re.search(pattern, text)
-        if not match:
-            await update.message.reply_text("❌ الرد غير صحيح، اكتب السعر والوقت مثلاً: 50 جنيه 30 دقيقة")
+    if text == "🚶‍♂️ مستخدم":
+        user_states[user_id] = "awaiting_governorate"
+        await update.message.reply_text("📍 من فضلك اختار محافظتك:", reply_markup=ReplyKeyboardMarkup([[g] for g in GOVS], resize_keyboard=True))
+        return
+
+    if user_states.get(user_id) == "awaiting_governorate" and text in GOVS:
+        user_states[user_id] = {"state": "awaiting_order", "gov": text}
+        await update.message.reply_text("📝 اكتب تفاصيل طلبك:")
+        return
+
+    if isinstance(user_states.get(user_id), dict) and user_states[user_id]["state"] == "awaiting_order":
+        order_text = text
+        governorate = user_states[user_id]["gov"]
+        try:
+            conn = psycopg2.connect(DATABASE_URL)
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO orders (user_id, governorate, text, status) VALUES (%s, %s, %s, %s) RETURNING id",
+                           (user_id, governorate, order_text, "قيد الانتظار"))
+            order_id = cursor.fetchone()[0]
+            conn.commit()
+            conn.close()
+            logging.info(f"✅ تم حفظ الطلب: {order_id} للمستخدم {user_id}")
+
+            await update.message.reply_text("✅ تم استلام طلبك. 📢 هنرسله للمناديب دلوقتي...")
+
+            # ابعت الطلب لكل المناديب في نفس المحافظة
+            for agent_id, agent_gov in context.bot_data.get("agents", {}).items():
+                if agent_gov == governorate:
+                    await context.bot.send_message(
+                        chat_id=agent_id,
+                        text=f"📦 طلب جديد من {governorate}:\n{order_text}",
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("تقديم عرض", callback_data=f"offer_price_{order_id}")]
+                        ])
+                    )
+
+        except Exception as e:
+            logging.error(f"❌ فشل حفظ الطلب: {e}")
+            await update.message.reply_text("❌ حصل خطأ أثناء حفظ طلبك.")
+
+        user_states[user_id] = None
+        return
+
+    if text == "🚚 مندوب":
+        user_states[user_id] = "awaiting_agent_gov"
+        await update.message.reply_text("📍 اختار محافظتك:", reply_markup=ReplyKeyboardMarkup([[g] for g in GOVS], resize_keyboard=True))
+        return
+
+    if user_states.get(user_id) == "awaiting_agent_gov" and text in GOVS:
+        context.bot_data.setdefault("agents", {})[user_id] = text
+        user_states[user_id] = None
+        await update.message.reply_text("✅ تم تسجيلك كمندوب! هيوصلك الطلبات اللي في محافظتك.")
+        return
+
+async def handle_offer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data.split("_")
+    step = data[1]
+
+    if step == "price":
+        order_id = int(data[2])
+        agent_current_order[query.from_user.id] = order_id
+        prices = [30, 40, 50, 60]
+        buttons = [[InlineKeyboardButton(f"{p} جنيه", callback_data=f"offer_eta_price_{p}")] for p in prices]
+        await query.message.reply_text("💰 اختار السعر:", reply_markup=InlineKeyboardMarkup(buttons))
+
+    elif step == "eta":
+        price = int(data[3])
+        agent_id = query.from_user.id
+        order_id = agent_current_order.get(agent_id)
+        agent_offer_data[agent_id] = {"order_id": order_id, "price": price}
+
+        etas = [10, 20, 30]
+        buttons = [[InlineKeyboardButton(f"{e} دقيقة", callback_data=f"submit_offer_{e}")] for e in etas]
+        await query.message.reply_text("⏱ اختار وقت التوصيل:", reply_markup=InlineKeyboardMarkup(buttons))
+
+    elif step == "offer":
+        eta = int(data[2])
+        agent_id = query.from_user.id
+        data = agent_offer_data.get(agent_id)
+
+        if not data:
+            await query.message.reply_text("❌ لم يتم اختيار السعر.")
             return
 
-        price = match.group(1)
-        eta = match.group(4) + " دقيقة"
-
-        order_id = agent_current_order.get(user_id)
-        if not order_id:
-            await update.message.reply_text("❌ ما فيش طلب مرتبط حالياً للعرض.")
-            user_states[user_id] = None
-            return
+        order_id = data["order_id"]
+        price = data["price"]
 
         try:
             conn = psycopg2.connect(DATABASE_URL)
             cursor = conn.cursor()
             cursor.execute(
-                "INSERT INTO offers (order_id, agent_id, price, eta, status) VALUES (%s, %s, %s, %s, %s)",
-                (order_id, user_id, price, eta, "قيد الانتظار")
+                "INSERT INTO offers (order_id, agent_id, price, eta, status) VALUES (%s, %s, %s, %s, %s) RETURNING id",
+                (order_id, agent_id, price, eta, "قيد الانتظار")
             )
+            offer_id = cursor.fetchone()[0]
+            cursor.execute("SELECT user_id FROM orders WHERE id = %s", (order_id,))
+            user_id = cursor.fetchone()[0]
             conn.commit()
-            cursor.close()
             conn.close()
-            await update.message.reply_text(f"✅ تم إرسال العرض: السعر {price} جنيه، الوقت {eta}")
-            user_states[user_id] = None
-            agent_current_order.pop(user_id, None)
+
+            await query.message.reply_text("✅ تم إرسال العرض للمستخدم.")
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=f"📬 عرض جديد لطلبك:\n💰 السعر: {price} جنيه\n⏱ الوقت: {eta} دقيقة",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ موافق على العرض", callback_data=f"accept_offer_{offer_id}_{order_id}")]
+                ])
+            )
+
         except Exception as e:
             logging.error(f"❌ خطأ في حفظ العرض: {e}")
-            await update.message.reply_text("❌ حدث خطأ أثناء حفظ العرض.")
-        return
+            await query.message.reply_text("❌ حصل خطأ أثناء إرسال العرض.")
 
-    if text == "🚶‍♂️ مستخدم":
-        user_states[user_id] = "awaiting_user_governorate"
-        await update.message.reply_text("اختار محافظتك:", reply_markup=ReplyKeyboardMarkup([[g] for g in governorates], resize_keyboard=True))
-        return
+async def accept_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    offer_id, order_id = map(int, query.data.split("_")[2:])
 
-    if user_states.get(user_id) == "awaiting_user_governorate":
-        if text in governorates:
-            user_data[user_id] = {"governorate": text}
-            user_states[user_id] = "awaiting_order_text"
-            await update.message.reply_text("اكتب طلبك بالتفصيل:")
-        else:
-            await update.message.reply_text("❌ اختار محافظة من القائمة.")
-        return
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
 
-    if user_states.get(user_id) == "awaiting_order_text":
-        governorate = user_data[user_id]["governorate"]
-        try:
-            conn = psycopg2.connect(DATABASE_URL)
-            cursor = conn.cursor()
-            cursor.execute("INSERT INTO orders (user_id, governorate, text, status) VALUES (%s, %s, %s, %s) RETURNING id",
-                           (user_id, governorate, text, "قيد الانتظار"))
-            order_id = cursor.fetchone()[0]
-            conn.commit()
+        # اختيار العرض
+        cursor.execute("UPDATE offers SET status = 'تم الاختيار' WHERE id = %s", (offer_id,))
+        # رفض باقي العروض
+        cursor.execute("UPDATE offers SET status = 'مرفوض' WHERE order_id = %s AND id != %s", (order_id, offer_id))
+        # تحديث حالة الطلب
+        cursor.execute("UPDATE orders SET status = 'قيد التنفيذ' WHERE id = %s", (order_id,))
+        conn.commit()
+        conn.close()
 
-            cursor.execute("SELECT user_id FROM agents WHERE governorate = %s", (governorate,))
-            agents = cursor.fetchall()
+        await query.message.reply_text("✅ تم قبول العرض، وجاري تنفيذ الطلب 🚚")
 
-            for agent in agents:
-                aid = agent[0]
-                agent_current_order[aid] = order_id
-                try:
-                    await context.bot.send_message(chat_id=aid, text=f"📦 طلب جديد في {governorate}:\n{text}\n\n*رد بالعرض بالسعر والوقت* مثل:\n50 جنيه 30 دقيقة")
-                except Exception as e:
-                    logging.warning(f"⚠️ فشل إرسال الطلب للمندوب {aid}: {e}")
-
-            cursor.close()
-            conn.close()
-            await update.message.reply_text("✅ تم استلام طلبك، هيتم إرسال العروض ليك من المناديب قريباً.")
-        except Exception as e:
-            logging.error(f"❌ خطأ في حفظ الطلب: {e}")
-            await update.message.reply_text("❌ حصل مشكلة أثناء حفظ الطلب.")
-        user_states[user_id] = None
-        return
-
-    if text == "🚚 مندوب":
-        user_states[user_id] = "awaiting_agent_governorate"
-        await update.message.reply_text("اختار محافظتك كمندوب:", reply_markup=ReplyKeyboardMarkup([[g] for g in governorates], resize_keyboard=True))
-        return
-
-    if user_states.get(user_id) == "awaiting_agent_governorate":
-        if text in governorates:
-            try:
-                conn = psycopg2.connect(DATABASE_URL)
-                cursor = conn.cursor()
-                cursor.execute("INSERT INTO agents (user_id, governorate) VALUES (%s, %s) ON CONFLICT (user_id) DO UPDATE SET governorate = EXCLUDED.governorate",
-                               (user_id, text))
-                conn.commit()
-                cursor.close()
-                conn.close()
-                await update.message.reply_text("✅ تم تسجيلك كمندوب. هيتم إرسال الطلبات من محافظتك تلقائيًا.")
-            except Exception as e:
-                logging.error(f"❌ فشل تسجيل المندوب: {e}")
-                await update.message.reply_text("❌ حصل خطأ أثناء تسجيلك كمندوب.")
-            user_states[user_id] = None
-        else:
-            await update.message.reply_text("❌ اختار محافظة من القائمة.")
-        return
-
-    await update.message.reply_text("من فضلك ابدأ بـ /start")
+    except Exception as e:
+        logging.error(f"❌ خطأ في تأكيد العرض: {e}")
+        await query.message.reply_text("❌ حصل خطأ أثناء تأكيد العرض.")
 
 def main():
-    create_tables()
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(handle_offer_callback, pattern=r"^offer_price_\d+$"))
+    app.add_handler(CallbackQueryHandler(handle_offer_callback, pattern=r"^offer_eta_price_\d+$"))
+    app.add_handler(CallbackQueryHandler(handle_offer_callback, pattern=r"^submit_offer_\d+$"))
+    app.add_handler(CallbackQueryHandler(accept_offer, pattern=r"^accept_offer_\d+_\d+$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    logging.info("📦 بوت المستخدم والمناديب شغال...")
+    logging.info("🚀 البوت شغال...")
     app.run_polling()
 
 if __name__ == "__main__":
