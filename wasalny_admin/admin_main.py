@@ -186,7 +186,7 @@ async def handle_cancel_order_callback(update: Update, context: ContextTypes.DEF
             await query.message.reply_text("حدث خطأ أثناء إلغاء الطلب.")
 
 if __name__ == "__main__":
-    app = ApplicationBuilder().token(os.getenv("ADMIN_TOKEN")).build()
+    app = ApplicationBuilder().token(os.getenv("BOT_TOKEN_ADMIN")).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
