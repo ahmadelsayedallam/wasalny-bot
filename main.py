@@ -22,7 +22,6 @@ AREAS = [
 PRICE_OPTIONS = ["10 جنيه", "15 جنيه", "20 جنيه"]
 TIME_OPTIONS = ["10 دقايق", "15 دقيقه", "30 دقيقه"]
 
-
 def get_conn():
     return psycopg2.connect(DATABASE_URL)
 
@@ -64,39 +63,38 @@ async def handle_user_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
         governorate = user_data[user_id]["governorate"]
         area = user_data[user_id]["area"]
         try:
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO orders (user_id, governorate, area, text, status)
-        VALUES (%s, %s, %s, %s, %s) RETURNING id
-    """, (user_id, governorate, area, order_text, "قيد الانتظار"))
-    order_id = cur.fetchone()[0]
-    conn.commit()
+            conn = get_conn()
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO orders (user_id, governorate, area, text, status)
+                VALUES (%s, %s, %s, %s, %s) RETURNING id
+            """, (user_id, governorate, area, order_text, "قيد الانتظار"))
+            order_id = cur.fetchone()[0]
+            conn.commit()
 
-    cur.execute("""
-        SELECT user_id FROM agents
-        WHERE is_verified = TRUE AND governorate = %s AND area = %s
-    """, (governorate, area))
-    agents = cur.fetchall()
-    cur.close()
-    conn.close()
+            cur.execute("""
+                SELECT user_id FROM agents
+                WHERE is_verified = TRUE AND governorate = %s AND area = %s
+            """, (governorate, area))
+            agents = cur.fetchall()
+            cur.close()
+            conn.close()
 
-    for (agent_id,) in agents:
-        button = InlineKeyboardMarkup([[InlineKeyboardButton("📝 إرسال عرض", callback_data=f"offer_{order_id}")]])
-        await context.bot.send_message(
-            chat_id=agent_id,
-            text=f"طلب جديد من {area}:\n{order_text}",
-            reply_markup=button
-        )
+            for (agent_id,) in agents:
+                button = InlineKeyboardMarkup([[InlineKeyboardButton("📝 إرسال عرض", callback_data=f"offer_{order_id}")]])
+                await context.bot.send_message(
+                    chat_id=agent_id,
+                    text=f"طلب جديد من {area}:\n{order_text}",
+                    reply_markup=button
+                )
 
-    await update.message.reply_text("✅ تم تسجيل طلبك! سيتم إرسال الطلب للمناديب القريبين.")
-except Exception as e:
-    logging.error(f"❌ فشل حفظ الطلب: {e}")
-    await update.message.reply_text("❌ حصل خطأ أثناء تسجيل الطلب.")
-user_states[user_id] = None
-user_data[user_id] = {}
-return
-
+            await update.message.reply_text("✅ تم تسجيل طلبك! سيتم إرسال الطلب للمناديب القريبين.")
+        except Exception as e:
+            logging.error(f"❌ فشل حفظ الطلب: {e}")
+            await update.message.reply_text("❌ حصل خطأ أثناء تسجيل الطلب.")
+        user_states[user_id] = None
+        user_data[user_id] = {}
+        return
 
     if text == "🚚 مندوب":
         try:
