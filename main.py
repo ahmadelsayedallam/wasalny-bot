@@ -1,21 +1,13 @@
-# main.py (WasalnyBot)
-
 import os
 import logging
 import psycopg2
-import cloudinary
-import cloudinary.uploader
 from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 )
 
-# إعداد البيئة
 TOKEN = os.getenv("TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
-CLOUDINARY_URL = os.getenv("CLOUDINARY_URL")
-
-cloudinary.config(cloudinary_url=CLOUDINARY_URL)
 
 logging.basicConfig(level=logging.INFO)
 user_states = {}
@@ -36,7 +28,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("أهلاً بيك! اختار دورك:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
     user_states[user_id] = None
 
-# ===== المستخدم =====
+    # 🔍 التحقق من حالة المندوب
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT is_verified FROM agents WHERE user_id = %s", (user_id,))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+
+        if row:
+            if row[0]:
+                await update.message.reply_text("✅ تم تفعيل حسابك كمندوب.")
+            else:
+                await update.message.reply_text("⏳ طلبك قيد المراجعة.")
+        else:
+            await update.message.reply_text("❌ تم رفض طلبك أو لم يتم تقديم طلب بعد.")
+    except Exception as e:
+        logging.error(f"❌ فشل التحقق من حالة المندوب: {e}")
+
 async def handle_user_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text
@@ -68,24 +78,44 @@ async def handle_user_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
         order_text = text
         governorate = user_data[user_id]["governorate"]
         area = user_data[user_id]["area"]
-
         try:
             conn = get_conn()
             cur = conn.cursor()
-            cur.execute("INSERT INTO orders (user_id, governorate, area, text, status) VALUES (%s, %s, %s, %s, %s)",
-                        (user_id, governorate, area, order_text, "قيد الانتظار"))
+            cur.execute("""
+                INSERT INTO orders (user_id, governorate, area, text, status)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (user_id, governorate, area, order_text, "قيد الانتظار"))
             conn.commit()
             cur.close()
             conn.close()
-            await update.message.reply_text("✅ تم تسجيل طلبك! سيتم إرساله للمناديب القريبين قريباً.")
+            logging.info(f"✅ تم تسجيل الطلب من {user_id}: {order_text}")
+            await update.message.reply_text("✅ تم تسجيل طلبك! سيتم إرسال الطلب للمناديب القريبين.")
         except Exception as e:
-            logging.error(f"❌ فشل في حفظ الطلب: {e}")
+            logging.error(f"❌ فشل حفظ الطلب: {e}")
             await update.message.reply_text("❌ حصل خطأ أثناء تسجيل الطلب.")
         user_states[user_id] = None
         user_data[user_id] = {}
         return
 
     if text == "🚚 مندوب":
+        # 🔍 التحقق من حالة المندوب
+        try:
+            conn = get_conn()
+            cur = conn.cursor()
+            cur.execute("SELECT is_verified FROM agents WHERE user_id = %s", (user_id,))
+            row = cur.fetchone()
+            cur.close()
+            conn.close()
+
+            if row:
+                if row[0]:
+                    await update.message.reply_text("✅ تم تفعيل حسابك كمندوب.")
+                else:
+                    await update.message.reply_text("⏳ طلبك قيد المراجعة.")
+                return
+        except Exception as e:
+            logging.error(f"❌ فشل التحقق من حالة المندوب: {e}")
+
         user_states[user_id] = "awaiting_agent_name"
         await update.message.reply_text("اكتب اسمك الكامل:")
         return
@@ -111,22 +141,21 @@ async def handle_user_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         user_data[user_id]["area"] = text
         user_states[user_id] = "awaiting_id_photo"
-        await update.message.reply_text("📸 ارفع صورة بطاقتك.")
+        await update.message.reply_text("📸 ارفع صورة بطاقتك لمراجعتها قبل التفعيل.")
         return
 
     await update.message.reply_text("من فضلك ابدأ بـ /start")
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-
     if user_states.get(user_id) == "awaiting_id_photo":
-        photo = update.message.photo[-1]
-        file = await context.bot.get_file(photo.file_id)
-        file_path = await file.download_to_drive(f"photo_{user_id}.jpg")
+        photo_file = await context.bot.get_file(update.message.photo[-1].file_id)
+        photo_url = photo_file.file_path
 
+        import cloudinary.uploader
         try:
-            result = cloudinary.uploader.upload(file_path)
-            image_url = result["secure_url"]
+            uploaded = cloudinary.uploader.upload(photo_url)
+            image_url = uploaded["secure_url"]
 
             full_name = user_data[user_id].get("full_name")
             governorate = user_data[user_id].get("governorate")
@@ -135,20 +164,17 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn = get_conn()
             cur = conn.cursor()
             cur.execute("""
-                INSERT INTO agents (user_id, full_name, governorate, area, id_photo_url, is_verified)
+                INSERT INTO agents (user_id, full_name, governorate, area, id_photo_file_id, is_verified)
                 VALUES (%s, %s, %s, %s, %s, %s)
             """, (user_id, full_name, governorate, area, image_url, False))
             conn.commit()
             cur.close()
             conn.close()
 
-            await update.message.reply_text("✅ تم استلام البطاقة. سيتم مراجعتها من الإدارة قبل التفعيل.")
+            await update.message.reply_text("✅ تم استلام البطاقة. سيتم مراجعتها من الإدارة قبل تفعيل حسابك.")
         except Exception as e:
             logging.error(f"❌ فشل رفع الصورة أو حفظ البيانات: {e}")
             await update.message.reply_text("❌ حصل خطأ أثناء رفع الصورة أو حفظ البيانات.")
-        finally:
-            os.remove(file_path)
-
         user_states[user_id] = None
         user_data[user_id] = {}
 
