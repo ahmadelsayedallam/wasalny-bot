@@ -85,8 +85,8 @@ async def handle_user_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 button = InlineKeyboardMarkup.from_button(
                     InlineKeyboardButton("📝 إرسال عرض", callback_data=f"offer_{order_id}")
                 )
-                await context.bot.send_message(chat_id=agent_id, text=f"طلب جديد من {area}:
-{order_text}", reply_markup=button)
+                await context.bot.send_message(chat_id=agent_id, text=f"طلب جديد من {area}:\n{order_text}", reply_markup=button)
+
 
             await update.message.reply_text("✅ تم تسجيل طلبك! سيتم إرسال الطلب للمناديب القريبين.")
         except Exception as e:
