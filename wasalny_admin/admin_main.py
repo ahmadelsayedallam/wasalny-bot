@@ -1,78 +1,110 @@
 import os
 import logging
 import psycopg2
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, CallbackQueryHandler,
+    ContextTypes
+)
 
+# الإعدادات
 BOT_TOKEN_ADMIN = os.getenv("BOT_TOKEN_ADMIN")
 DATABASE_URL = os.getenv("DATABASE_URL")
-ADMIN_USER_ID = 1044357384  # حط الـ Telegram user ID بتاعك هنا
+ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID", "123456789"))  # ← حط ID بتاعك هنا أو في .env
 
 logging.basicConfig(level=logging.INFO)
 
 def get_conn():
     return psycopg2.connect(DATABASE_URL)
 
+# أمر البدء
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_USER_ID:
-        await update.message.reply_text("❌ غير مصرح لك باستخدام هذا البوت.")
+        await update.message.reply_text("❌ ليس لديك صلاحية الوصول.")
+        return
+    await update.message.reply_text("👋 أهلاً بك في لوحة الإدارة.\nاستخدم الأمر /pending_agents لعرض المناديب في انتظار المراجعة.")
+
+# عرض المناديب في انتظار التفعيل
+async def pending_agents(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_USER_ID:
+        await update.message.reply_text("❌ ليس لديك صلاحية الوصول.")
         return
 
     try:
         conn = get_conn()
         cur = conn.cursor()
         cur.execute("""
-            SELECT user_id, full_name, governorate, area, id_photo_file_id
+            SELECT user_id, full_name, governorate, area, id_photo_url
             FROM agents
             WHERE is_verified = FALSE
+            ORDER BY user_id
         """)
-        rows = cur.fetchall()
+        agents = cur.fetchall()
         cur.close()
         conn.close()
 
-        if not rows:
-            await update.message.reply_text("✅ لا يوجد مناديب في الانتظار.")
+        if not agents:
+            await update.message.reply_text("✅ لا يوجد مناديب قيد المراجعة.")
             return
 
-        for row in rows:
-            user_id, full_name, governorate, area, file_id = row
+        for agent in agents:
+            user_id, full_name, governorate, area, id_photo_url = agent
             keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ موافقة", callback_data=f"approve_{user_id}"),
-                 InlineKeyboardButton("❌ رفض", callback_data=f"reject_{user_id}")]
+                [InlineKeyboardButton("✅ موافقة", callback_data=f"approve:{user_id}"),
+                 InlineKeyboardButton("❌ رفض", callback_data=f"reject:{user_id}")]
             ])
-            await context.bot.send_photo(
-                chat_id=update.effective_chat.id,
-                photo=file_id,
-                caption=f"🆔 {user_id}\n👤 {full_name}\n📍 {governorate} - {area}",
-                reply_markup=keyboard
-            )
+            text = f"""👤 <b>{full_name}</b>
+📍 {governorate} - {area}
+🆔 {user_id}"""
+
+            try:
+                await context.bot.send_photo(
+                    chat_id=update.effective_chat.id,
+                    photo=id_photo_url,
+                    caption=text,
+                    parse_mode='HTML',
+                    reply_markup=keyboard
+                )
+            except Exception as e:
+                logging.error(f"❌ خطأ في عرض صورة المندوب: {e}")
+                await update.message.reply_text(f"{text}\n⚠️ لم يتم عرض الصورة، راجع الرابط المخزن.")
     except Exception as e:
         logging.error(f"❌ خطأ في جلب المندوبين: {e}")
-        await update.message.reply_text("❌ حصل خطأ أثناء عرض المندوبين.")
+        await update.message.reply_text("❌ حدث خطأ أثناء جلب بيانات المندوبين.")
 
-async def handle_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# تنفيذ الموافقة أو الرفض
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_USER_ID:
+        await update.callback_query.answer("❌ ليس لديك صلاحية.")
+        return
+
     query = update.callback_query
     await query.answer()
+    action, user_id_str = query.data.split(":")
+    user_id = int(user_id_str)
 
-    action, user_id = query.data.split("_")
     try:
         conn = get_conn()
         cur = conn.cursor()
+
         if action == "approve":
             cur.execute("UPDATE agents SET is_verified = TRUE WHERE user_id = %s", (user_id,))
-            await query.edit_message_caption(caption="✅ تمت الموافقة على المندوب.")
-        else:
+            conn.commit()
+            await query.edit_message_caption(caption="✅ تم الموافقة على هذا المندوب.")
+        elif action == "reject":
             cur.execute("DELETE FROM agents WHERE user_id = %s", (user_id,))
-            await query.edit_message_caption(caption="❌ تم رفض المندوب وحذف بياناته.")
-        conn.commit()
+            conn.commit()
+            await query.edit_message_caption(caption="❌ تم رفض هذا المندوب وحذف بياناته.")
         cur.close()
         conn.close()
     except Exception as e:
-        logging.error(f"❌ فشل في تحديث حالة المندوب: {e}")
-        await query.edit_message_caption(caption="❌ حصل خطأ أثناء تنفيذ الإجراء.")
+        logging.error(f"❌ خطأ أثناء التحديث: {e}")
+        await query.edit_message_caption(caption="❌ حدث خطأ أثناء تنفيذ الإجراء.")
 
+# تشغيل البوت
 if __name__ == "__main__":
     app = ApplicationBuilder().token(BOT_TOKEN_ADMIN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(handle_decision))
+    app.add_handler(CommandHandler("pending_agents", pending_agents))
+    app.add_handler(CallbackQueryHandler(handle_callback))
     app.run_polling()
