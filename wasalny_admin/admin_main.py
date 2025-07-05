@@ -1,3 +1,5 @@
+# admin_bot.py (WasalnyAdminBot)
+
 import os
 import logging
 import psycopg2
@@ -9,7 +11,7 @@ from telegram.ext import (
 
 BOT_TOKEN_ADMIN = os.getenv("BOT_TOKEN_ADMIN")
 DATABASE_URL = os.getenv("DATABASE_URL")
-ADMIN_ID = 1044357384  # غيّره لو عايز تضيف Admin تاني
+ADMIN_ID = 1044357384  # عدل لو في Admin تاني
 
 logging.basicConfig(level=logging.INFO)
 
@@ -62,13 +64,12 @@ async def pending_agents(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logging.error(f"❌ خطأ في عرض صورة المندوب: {e}")
                 await update.message.reply_text(
-                    f"👤 <b>{full_name}</b>\n📍 {governorate} - {area}\n🆔 {user_id}\n⚠️ لم يتم عرض الصورة، راجع الرابط المخزن.",
+                    f"👤 <b>{full_name}</b>\n📍 {governorate} - {area}\n🆔 {user_id}\n⚠️ لم يتم عرض الصورة.",
                     parse_mode="HTML"
                 )
-
     except Exception as e:
         logging.error(f"❌ خطأ في جلب المندوبين: {e}")
-        await update.message.reply_text("❌ حدث خطأ أثناء جلب المندوبين.")
+        await update.message.reply_text("❌ حصل خطأ أثناء جلب المندوبين.")
 
 async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -78,22 +79,23 @@ async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user_id = int(data.split("_")[1])
-    action = "TRUE" if data.startswith("accept") else "FALSE"
     try:
         conn = get_conn()
         cur = conn.cursor()
-        if action == "TRUE":
+        if data.startswith("accept_"):
             cur.execute("UPDATE agents SET is_verified = TRUE WHERE user_id = %s", (user_id,))
             await query.edit_message_caption(caption="✅ تم قبول المندوب.")
+            await context.bot.send_message(chat_id=user_id, text="✅ تم قبول تسجيلك كمندوب، هتبدأ توصلك الطلبات من منطقتك.")
         else:
             cur.execute("DELETE FROM agents WHERE user_id = %s", (user_id,))
             await query.edit_message_caption(caption="❌ تم رفض المندوب.")
+            await context.bot.send_message(chat_id=user_id, text="❌ لم يتم قبول تسجيلك كمندوب. تأكد من وضوح الصورة وحاول مرة تانية.")
         conn.commit()
         cur.close()
         conn.close()
     except Exception as e:
         logging.error(f"❌ خطأ أثناء تنفيذ الإجراء: {e}")
-        await query.edit_message_caption(caption="❌ حدث خطأ أثناء تنفيذ العملية.")
+        await query.edit_message_caption(caption="❌ حصل خطأ أثناء تنفيذ العملية.")
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(BOT_TOKEN_ADMIN).build()
