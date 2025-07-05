@@ -1,9 +1,9 @@
 import os
 import logging
 import psycopg2
-from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+    ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 )
 
 TOKEN = os.getenv("TOKEN")
@@ -19,6 +19,9 @@ AREAS = [
     "شارع البحر", "شارع الحلو", "محطة القطار", "موقف الجلاء"
 ]
 
+TIMES = ["10 دقايق", "15 دقايق", "20 دقايق", "30 دقايق"]
+PRICES = ["10 جنيه", "15 جنيه", "20 جنيه", "25 جنيه"]
+
 def get_conn():
     return psycopg2.connect(DATABASE_URL)
 
@@ -27,25 +30,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[KeyboardButton("🚶‍♂️ مستخدم"), KeyboardButton("🚚 مندوب")]]
     await update.message.reply_text("أهلاً بيك! اختار دورك:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
     user_states[user_id] = None
-
-    # 🔍 التحقق من حالة المندوب
-    try:
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute("SELECT is_verified FROM agents WHERE user_id = %s", (user_id,))
-        row = cur.fetchone()
-        cur.close()
-        conn.close()
-
-        if row:
-            if row[0]:
-                await update.message.reply_text("✅ تم تفعيل حسابك كمندوب.")
-            else:
-                await update.message.reply_text("⏳ طلبك قيد المراجعة.")
-        else:
-            await update.message.reply_text("❌ تم رفض طلبك أو لم يتم تقديم طلب بعد.")
-    except Exception as e:
-        logging.error(f"❌ فشل التحقق من حالة المندوب: {e}")
 
 async def handle_user_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -83,22 +67,36 @@ async def handle_user_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cur = conn.cursor()
             cur.execute("""
                 INSERT INTO orders (user_id, governorate, area, text, status)
-                VALUES (%s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s) RETURNING id
             """, (user_id, governorate, area, order_text, "قيد الانتظار"))
+            order_id = cur.fetchone()[0]
             conn.commit()
+
+            cur.execute("""
+                SELECT user_id FROM agents
+                WHERE is_verified = TRUE AND governorate = %s AND area = %s
+            """, (governorate, area))
+            agents = cur.fetchall()
             cur.close()
             conn.close()
-            logging.info(f"✅ تم تسجيل الطلب من {user_id}: {order_text}")
+
+            for agent in agents:
+                agent_id = agent[0]
+                button = InlineKeyboardMarkup.from_button(
+                    InlineKeyboardButton("📝 إرسال عرض", callback_data=f"offer_{order_id}")
+                )
+                await context.bot.send_message(chat_id=agent_id, text=f"طلب جديد من {area}:
+{order_text}", reply_markup=button)
+
             await update.message.reply_text("✅ تم تسجيل طلبك! سيتم إرسال الطلب للمناديب القريبين.")
         except Exception as e:
-            logging.error(f"❌ فشل حفظ الطلب: {e}")
+            logging.error(f"❌ فشل حفظ الطلب أو إرسال للمناديب: {e}")
             await update.message.reply_text("❌ حصل خطأ أثناء تسجيل الطلب.")
         user_states[user_id] = None
         user_data[user_id] = {}
         return
 
     if text == "🚚 مندوب":
-        # 🔍 التحقق من حالة المندوب
         try:
             conn = get_conn()
             cur = conn.cursor()
@@ -113,6 +111,8 @@ async def handle_user_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     await update.message.reply_text("⏳ طلبك قيد المراجعة.")
                 return
+            else:
+                await update.message.reply_text("❌ تم رفض طلبك سابقًا. يمكنك إعادة التسجيل من جديد.")
         except Exception as e:
             logging.error(f"❌ فشل التحقق من حالة المندوب: {e}")
 
@@ -178,9 +178,56 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_states[user_id] = None
         user_data[user_id] = {}
 
+async def handle_offer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    if not data.startswith("offer_"):
+        return
+
+    order_id = data.split("_")[1]
+    user_states[query.from_user.id] = f"awaiting_price_{order_id}"
+    keyboard = ReplyKeyboardMarkup([[p] for p in PRICES], resize_keyboard=True)
+    await query.message.reply_text("اختار السعر المناسب:", reply_markup=keyboard)
+
+async def handle_offer_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    text = update.message.text
+    state = user_states.get(user_id, "")
+
+    if state.startswith("awaiting_price_"):
+        order_id = state.split("_")[2]
+        user_data[user_id] = {"price": text}
+        user_states[user_id] = f"awaiting_time_{order_id}"
+        await update.message.reply_text("اختار الوقت المتوقع:", reply_markup=ReplyKeyboardMarkup([[t] for t in TIMES], resize_keyboard=True))
+        return
+
+    if state.startswith("awaiting_time_"):
+        order_id = state.split("_")[2]
+        price = user_data[user_id].get("price")
+        time = text
+        try:
+            conn = get_conn()
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO offers (order_id, agent_id, price, time)
+                VALUES (%s, %s, %s, %s)
+            """, (order_id, user_id, price, time))
+            conn.commit()
+            cur.close()
+            conn.close()
+            await update.message.reply_text("✅ تم إرسال عرضك بنجاح!", reply_markup=ReplyKeyboardRemove())
+        except Exception as e:
+            logging.error(f"❌ فشل حفظ العرض: {e}")
+            await update.message.reply_text("❌ حصل خطأ أثناء إرسال العرض.")
+        user_states[user_id] = None
+        user_data[user_id] = {}
+
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_role))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.add_handler(CallbackQueryHandler(handle_offer_callback))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_offer_reply))
     app.run_polling()
