@@ -154,7 +154,7 @@ async def delete_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.message.reply_text("❌ خطأ في حذف الطلب.")
 
 if __name__ == "__main__":
-    app = ApplicationBuilder().token(os.getenv("ADMIN_TOKEN")).build()
+    app = ApplicationBuilder().token(os.getenv("BOT_TOKEN_ADMIN")).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
