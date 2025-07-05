@@ -36,13 +36,11 @@ TIME_OPTS = ["10 دقايق", "15 دقيقه", "30 دقيقه"]
 def get_conn():
     return psycopg2.connect(DATABASE_URL)
 
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     keyboard = [[KeyboardButton("🚶‍♂️ مستخدم"), KeyboardButton("🚚 مندوب")]]
     await update.message.reply_text("أهلاً بيك! اختار دورك:", reply_markup=ReplyKeyboardMarkup(keyboard, True))
     user_states[user_id] = None
-
 
 async def handle_user_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -128,7 +126,6 @@ async def handle_user_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("❌ استخدم /start للبدء.")
 
-
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if user_states.get(uid) == "awaiting_id_photo":
@@ -154,7 +151,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ فشل في رفع الصورة.")
         user_states[uid] = None
         user_data[uid] = {}
-
 
 async def handle_offer_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -194,7 +190,6 @@ async def handle_offer_button(update: Update, context: ContextTypes.DEFAULT_TYPE
             await q.message.reply_text("❌ فشل في إرسال العرض.")
         user_states[uid] = None
         user_data[uid] = {}
-
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
