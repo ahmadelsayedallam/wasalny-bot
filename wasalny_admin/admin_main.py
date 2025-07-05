@@ -44,20 +44,17 @@ async def pending_agents(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         for agent in agents:
-            user_id, full_name, governorate, area, file_id = agent
+            user_id, full_name, governorate, area, photo_url = agent
             keyboard = InlineKeyboardMarkup([
                 [
                     InlineKeyboardButton("✅ قبول", callback_data=f"accept_{user_id}"),
                     InlineKeyboardButton("❌ رفض", callback_data=f"reject_{user_id}")
                 ]
             ])
-
             try:
-                # نحاول نجيب الملف الأول نتأكد إنه صالح
-                await context.bot.get_file(file_id)
                 await context.bot.send_photo(
                     chat_id=update.effective_chat.id,
-                    photo=file_id,
+                    photo=photo_url,
                     caption=f"👤 <b>{full_name}</b>\n📍 {governorate} - {area}\n🆔 {user_id}",
                     parse_mode="HTML",
                     reply_markup=keyboard
@@ -72,7 +69,6 @@ async def pending_agents(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logging.error(f"❌ خطأ في جلب المندوبين: {e}")
         await update.message.reply_text("❌ حدث خطأ أثناء جلب المندوبين.")
-
 
 async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
