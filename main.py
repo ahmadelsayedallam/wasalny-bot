@@ -4,16 +4,18 @@ import psycopg2
 import httpx
 import cloudinary
 import cloudinary.uploader
-from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove,
+    InlineKeyboardButton, InlineKeyboardMarkup
+)
 from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, CallbackQueryHandler, filters
+    ApplicationBuilder, CommandHandler, MessageHandler,
+    CallbackQueryHandler, ContextTypes, filters
 )
 
-# إعداد المتغيرات
 TOKEN = os.getenv("TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# إعداد cloudinary
 cloudinary.config(
     cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
     api_key=os.getenv("CLOUDINARY_API_KEY"),
@@ -21,17 +23,13 @@ cloudinary.config(
 )
 
 logging.basicConfig(level=logging.INFO)
-user_states = {}
-user_data = {}
+user_states, user_data = {}, {}
 
-# المحافظات والأحياء المدعومة
-GOVERNORATES = ["الغربية"]
-AREAS = [
-    "أول طنطا", "ثان طنطا", "حي السيالة", "حي الصاغة", "حي سعيد",
-    "شارع البحر", "شارع الحلو", "محطة القطار", "موقف الجلاء"
-]
-PRICE_OPTIONS = ["10 جنيه", "15 جنيه", "20 جنيه"]
-TIME_OPTIONS = ["10 دقايق", "15 دقيقه", "30 دقيقه"]
+GOVS = ["الغربية"]
+AREAS = ["أول طنطا","ثان طنطا","حي السيالة","حي الصاغة","حي سعيد",
+         "شارع البحر","شارع الحلو","محطة القطار","موقف الجلاء"]
+PRICE_OPTS = ["10 جنيه","15 جنيه","20 جنيه"]
+TIME_OPTS = ["10 دقايق","15 دقيقه","30 دقيقه"]
 
 def get_conn():
     return psycopg2.connect(DATABASE_URL)
@@ -39,204 +37,138 @@ def get_conn():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     keyboard = [[KeyboardButton("🚶‍♂️ مستخدم"), KeyboardButton("🚚 مندوب")]]
-    await update.message.reply_text("أهلاً بيك! اختار دورك:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
+    await update.message.reply_text("أهلاً بيك! اختار دورك:", reply_markup=ReplyKeyboardMarkup(keyboard, True))
     user_states[user_id] = None
 
 async def handle_user_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    text = update.message.text
+    uid = update.effective_user.id
+    txt = update.message.text
 
-    if text == "🚶‍♂️ مستخدم":
-        user_states[user_id] = "awaiting_governorate"
-        await update.message.reply_text("اختار محافظتك:", reply_markup=ReplyKeyboardMarkup([[g] for g in GOVERNORATES], resize_keyboard=True))
-        return
+    # طلب
+    if txt == "🚶‍♂️ مستخدم":
+        user_states[uid] = "awaiting_governorate"
+        return await update.message.reply_text("اختار محافظتك:", reply_markup=ReplyKeyboardMarkup([[g] for g in GOVS], True))
 
-    if user_states.get(user_id) == "awaiting_governorate":
-        if text not in GOVERNORATES:
-            await update.message.reply_text("❌ اختر محافظة من القائمة.")
-            return
-        user_data[user_id] = {"governorate": text}
-        user_states[user_id] = "awaiting_area"
-        await update.message.reply_text("اختار الحي:", reply_markup=ReplyKeyboardMarkup([[a] for a in AREAS], resize_keyboard=True))
-        return
+    st = user_states.get(uid)
+    if st == "awaiting_governorate":
+        if txt not in GOVS: return await update.message.reply_text("❌ اختر من القائمة.")
+        user_data[uid] = {"governorate": txt}
+        user_states[uid] = "awaiting_area"
+        return await update.message.reply_text("اختار الحي:", reply_markup=ReplyKeyboardMarkup([[a] for a in AREAS], True))
 
-    if user_states.get(user_id) == "awaiting_area":
-        if text not in AREAS:
-            await update.message.reply_text("❌ اختر حي من القائمة.")
-            return
-        user_data[user_id]["area"] = text
-        user_states[user_id] = "awaiting_order"
-        await update.message.reply_text("اكتب تفاصيل طلبك:", reply_markup=ReplyKeyboardRemove())
-        return
+    if st == "awaiting_area":
+        if txt not in AREAS: return await update.message.reply_text("❌ اختر من القائمة.")
+        user_data[uid]["area"] = txt
+        user_states[uid] = "awaiting_order"
+        return await update.message.reply_text("اكتب تفاصيل طلبك:", reply_markup=ReplyKeyboardRemove())
 
-    if user_states.get(user_id) == "awaiting_order":
-        order_text = text
-        governorate = user_data[user_id]["governorate"]
-        area = user_data[user_id]["area"]
+    if st == "awaiting_order":
+        od = txt
+        gov, area = user_data[uid]["governorate"], user_data[uid]["area"]
         try:
             conn = get_conn()
             cur = conn.cursor()
-            cur.execute("""
-                INSERT INTO orders (user_id, governorate, area, text, status)
-                VALUES (%s, %s, %s, %s, %s) RETURNING id
-            """, (user_id, governorate, area, order_text, "قيد الانتظار"))
-            order_id = cur.fetchone()[0]
+            cur.execute("INSERT INTO orders (user_id, governorate, area, text, status) VALUES (%s,%s,%s,%s,%s) RETURNING id",
+                        (uid, gov, area, od, "قيد الانتظار"))
+            oid = cur.fetchone()[0]
             conn.commit()
-
-            cur.execute("""
-                SELECT user_id FROM agents
-                WHERE is_verified = TRUE AND governorate = %s AND area = %s
-            """, (governorate, area))
-            agents = cur.fetchall()
-            cur.close()
+            cur.execute("SELECT user_id FROM agents WHERE is_verified=TRUE AND governorate=%s AND area=%s",(gov,area))
+            ags=cur.fetchall()
             conn.close()
-
-            for (agent_id,) in agents:
-                button = InlineKeyboardMarkup([[InlineKeyboardButton("📝 إرسال عرض", callback_data=f"offer_{order_id}")]])
-                await context.bot.send_message(
-                    chat_id=agent_id,
-                    text=f"طلب جديد من {area}:\n{order_text}",
-                    reply_markup=button
-                )
-
-            await update.message.reply_text("✅ تم تسجيل طلبك! سيتم إرسال الطلب للمناديب القريبين.")
+            for (aid,) in ags:
+                kb = InlineKeyboardMarkup([[InlineKeyboardButton("📝 عرض",callback_data=f"offer_{oid}")]])
+                await context.bot.send_message(chat_id=aid, text=f"طلب جديد من {area}:\n{od}", reply_markup=kb)
+            await update.message.reply_text("✅ تم التسجيل وسوف يصلك رد.")
         except Exception as e:
-            logging.error(f"❌ فشل حفظ الطلب: {e}")
-            await update.message.reply_text("❌ حصل خطأ أثناء تسجيل الطلب.")
-        user_states[user_id] = None
-        user_data[user_id] = {}
+            logging.error(e)
+            await update.message.reply_text("❌ خطأ في تسجيل الطلب.")
+        user_states[uid]=None; user_data[uid]={}
         return
 
-    if text == "🚚 مندوب":
+    # مندوب
+    if txt == "🚚 مندوب":
+        st = None
         try:
-            conn = get_conn()
-            cur = conn.cursor()
-            cur.execute("SELECT is_verified FROM agents WHERE user_id = %s", (user_id,))
+            conn = get_conn(); cur = conn.cursor()
+            cur.execute("SELECT is_verified FROM agents WHERE user_id=%s",(uid,))
             row = cur.fetchone()
-            cur.close()
             conn.close()
-
             if row:
-                if row[0]:
-                    await update.message.reply_text("✅ تم تفعيل حسابك كمندوب.")
-                else:
-                    await update.message.reply_text("⏳ طلبك قيد المراجعة. سيتم إعلامك بعد المراجعة.")
-                return
+                return await update.message.reply_text("✅ مفعل." if row[0] else "⏳ قيد مراجعة.")
         except Exception as e:
-            logging.error(f"❌ فشل التحقق من حالة المندوب: {e}")
+            logging.error(e)
+        user_states[uid] = "awaiting_agent_name"
+        return await update.message.reply_text("اكتب اسمك الكامل:")
 
-        user_states[user_id] = "awaiting_agent_name"
-        await update.message.reply_text("اكتب اسمك الكامل:")
-        return
+    if st == "awaiting_agent_name":
+        user_data[uid]={"full_name":txt}
+        user_states[uid]="awaiting_agent_governorate"
+        return await update.message.reply_text("اختار محافظتك:", reply_markup=ReplyKeyboardMarkup([[g] for g in GOVS], True))
 
-    if user_states.get(user_id) == "awaiting_agent_name":
-        user_data[user_id] = {"full_name": text}
-        user_states[user_id] = "awaiting_agent_governorate"
-        await update.message.reply_text("اختار محافظتك:", reply_markup=ReplyKeyboardMarkup([[g] for g in GOVERNORATES], resize_keyboard=True))
-        return
+    if st == "awaiting_agent_governorate":
+        if txt not in GOVS: return await update.message.reply_text("❌ اختر من القائمة.")
+        user_data[uid]["governorate"]=txt
+        user_states[uid]="awaiting_agent_area"
+        return await update.message.reply_text("اختار الحي:", reply_markup=ReplyKeyboardMarkup([[a] for a in AREAS], True))
 
-    if user_states.get(user_id) == "awaiting_agent_governorate":
-        if text not in GOVERNORATES:
-            await update.message.reply_text("❌ اختر محافظة من القائمة.")
-            return
-        user_data[user_id]["governorate"] = text
-        user_states[user_id] = "awaiting_agent_area"
-        await update.message.reply_text("اختار الحي:", reply_markup=ReplyKeyboardMarkup([[a] for a in AREAS], resize_keyboard=True))
-        return
+    if st == "awaiting_agent_area":
+        if txt not in AREAS: return await update.message.reply_text("❌ اختر من القائمة.")
+        user_data[uid]["area"]=txt
+        user_states[uid]="awaiting_id_photo"
+        return await update.message.reply_text("📸 ارفع صورة بطاقتك:")
 
-    if user_states.get(user_id) == "awaiting_agent_area":
-        if text not in AREAS:
-            await update.message.reply_text("❌ اختر حي من القائمة.")
-            return
-        user_data[user_id]["area"] = text
-        user_states[user_id] = "awaiting_id_photo"
-        await update.message.reply_text("📸 ارفع صورة بطاقتك لمراجعتها قبل التفعيل.")
-        return
-
-    await update.message.reply_text("من فضلك ابدأ بـ /start")
+    await update.message.reply_text("شغل /start من فضلك")
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_states.get(user_id) == "awaiting_id_photo":
-        file_id = update.message.photo[-1].file_id
-        full_name = user_data[user_id].get("full_name")
-        governorate = user_data[user_id].get("governorate")
-        area = user_data[user_id].get("area")
-
+    uid = update.effective_user.id
+    if user_states.get(uid) == "awaiting_id_photo":
+        fid = update.message.photo[-1].file_id
         try:
-            # رفع الصورة على Cloudinary
-            file = await context.bot.get_file(file_id)
-            file_path = file.file_path
-            telegram_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
+            file = await context.bot.get_file(fid)
+            url = file.file_path
+            async with httpx.AsyncClient() as c:
+                resp = await c.get(url)
+                res = cloudinary.uploader.upload(resp.content)
+                pu = res["secure_url"]
 
-            async with httpx.AsyncClient() as client:
-                response = await client.get(telegram_url)
-                result = cloudinary.uploader.upload(response.content)
-                photo_url = result["secure_url"]
-
-            conn = get_conn()
-            cur = conn.cursor()
-            cur.execute("""
-                INSERT INTO agents (user_id, full_name, governorate, area, id_photo_url, is_verified)
-                VALUES (%s, %s, %s, %s, %s, FALSE)
-            """, (user_id, full_name, governorate, area, photo_url))
-            conn.commit()
-            cur.close()
-            conn.close()
-            await update.message.reply_text("✅ تم استلام البطاقة. سيتم مراجعتها من الإدارة قبل تفعيل حسابك.")
+            d = user_data[uid]
+            conn = get_conn(); cur = conn.cursor()
+            cur.execute("INSERT INTO agents (user_id,full_name,governorate,area,id_photo_url,is_verified) VALUES (%s,%s,%s,%s,%s,FALSE)",
+                        (uid, d["full_name"], d["governorate"], d["area"], pu))
+            conn.commit(); conn.close()
+            await update.message.reply_text("✅ تم الاستلام، في انتظار مراجعة الإدارة.")
         except Exception as e:
-            logging.error(f"❌ فشل رفع الصورة أو حفظ البيانات: {e}")
-            await update.message.reply_text("❌ حصل خطأ أثناء رفع الصورة أو حفظ البيانات.")
-        user_states[user_id] = None
-        user_data[user_id] = {}
+            logging.error(e)
+            await update.message.reply_text("❌ فشل الرفع أو الحفظ.")
+        user_states[uid]=None; user_data[uid]={}
 
 async def handle_offer_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-
-    if data.startswith("offer_"):
-        order_id = int(data.split("_")[1])
-        user_id = query.from_user.id
-        user_data[user_id] = {"order_id": order_id}
-        user_states[user_id] = "awaiting_offer_price"
-        keyboard = [[InlineKeyboardButton(price, callback_data=f"price_{price}")] for price in PRICE_OPTIONS]
-        await query.message.reply_text("اختار السعر المناسب:", reply_markup=InlineKeyboardMarkup(keyboard))
-
-    elif data.startswith("price_"):
-        price = data.split("_")[1]
-        user_id = update.effective_user.id
-        user_data[user_id]["price"] = price
-        user_states[user_id] = "awaiting_offer_time"
-        keyboard = [[InlineKeyboardButton(time, callback_data=f"time_{time}")] for time in TIME_OPTIONS]
-        await query.message.reply_text("اختار الوقت المتوقع للتوصيل:", reply_markup=InlineKeyboardMarkup(keyboard))
-
-    elif data.startswith("time_"):
-        time = data.split("_")[1]
-        user_id = update.effective_user.id
-        offer = user_data.get(user_id, {})
-        order_id = offer.get("order_id")
-        price = offer.get("price")
-
+    q = update.callback_query; await q.answer()
+    d = q.data
+    uid = q.from_user.id
+    if d.startswith("offer_"):
+        oid=int(d.split("_")[1])
+        user_data[uid]={"order_id":oid}; user_states[uid]="awaiting_offer_price"
+        kb=[[InlineKeyboardButton(p,callback_data=f"price_{p}")] for p in PRICE_OPTS]
+        return await q.message.reply_text("اختار السعر:", reply_markup=InlineKeyboardMarkup(kb))
+    if d.startswith("price_"):
+        pr=d.split("_")[1]; user_data[uid]["price"]=pr; user_states[uid]="awaiting_offer_time"
+        kb=[[InlineKeyboardButton(t,callback_data=f"time_{t}")] for t in TIME_OPTS]
+        return await q.message.reply_text("اختار الزمن:", reply_markup=InlineKeyboardMarkup(kb))
+    if d.startswith("time_"):
+        tm=d.split("_")[1]
+        info=user_data.get(uid,{}); oid=info["order_id"]; pr=info["price"]
         try:
-            conn = get_conn()
-            cur = conn.cursor()
-            cur.execute("""
-                INSERT INTO offers (order_id, agent_id, price, estimated_time)
-                VALUES (%s, %s, %s, %s)
-            """, (order_id, user_id, price, time))
-            conn.commit()
-            cur.close()
-            conn.close()
-            await update.callback_query.message.reply_text("✅ تم إرسال عرضك بنجاح!")
+            conn=get_conn(); cur=conn.cursor()
+            cur.execute("INSERT INTO offers (order_id,agent_id,price,estimated_time) VALUES (%s,%s,%s,%s)",(oid,uid,pr,tm))
+            conn.commit(); conn.close()
+            await q.message.reply_text("✅ تم إرسال العرض.")
         except Exception as e:
-            logging.error(f"❌ فشل حفظ العرض: {e}")
-            await update.callback_query.message.reply_text("❌ حصل خطأ أثناء حفظ العرض.")
-        user_states[user_id] = None
-        user_data[user_id] = {}
+            logging.error(e); await q.message.reply_text("❌ فشل الإرسال.")
+        user_states[uid]=None; user_data[uid]={}
 
-if __name__ == "__main__":
-    app = ApplicationBuilder().token(TOKEN).build()
+if __name__=="__main__":
+    app=ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_role))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
